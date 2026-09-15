@@ -1,0 +1,7 @@
+rootProject.name = 'auction-platform'
+
+include 'common'
+include 'auction-service'
+include 'bid-service'
+include 'payment-service'
+include 'gateway'
