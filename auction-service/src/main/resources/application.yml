@@ -16,3 +16,24 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
     open-in-view: false
+
+scheduler:
+  auction:
+    # 마감·정산 스케줄러 실행 간격(ms). 이전 실행 종료 후 이 시간이 지나면 다음 실행.
+    fixed-delay: 5000
+    # B단계(정산)에서 한 틱에 처리할 최대 경매 수.
+    # 틱당 처리 건수 × Feign 타임아웃 합이 lockAtMostFor를 넘으면 락 만료 후 중복 실행 가능.
+    # 예: 50건 × (bid 5s + payment 5s 읽기 타임아웃) = 최악 500s > lockAtMostFor 30s.
+    # 정상 응답 시엔 수십 ms/건이라 문제 없지만, 다운스트림이 전부 타임아웃 나는 상황에서는
+    # 이 값을 줄이거나 lockAtMostFor(SchedulerConfig)를 늘려야 한다. 중복 실행돼도 모든 호출은 멱등이라 데이터는 깨지지 않는다.
+    settlement-batch-size: 50
+
+clients:
+  bid-service:
+    url: http://localhost:8082
+    connect-timeout-ms: 2000
+    read-timeout-ms: 5000
+  payment-service:
+    url: http://localhost:8083
+    connect-timeout-ms: 2000
+    read-timeout-ms: 5000
