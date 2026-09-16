@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS bid (
     bidder_id BIGINT NOT NULL,
     amount DECIMAL(15, 2) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-    bid_time DATETIME(6) NOT NULL,
+    created_at DATETIME(6) NOT NULL,
     INDEX idx_bid_auction_amount (auction_id, amount DESC),
     INDEX idx_bid_auction_bidder (auction_id, bidder_id)
 );

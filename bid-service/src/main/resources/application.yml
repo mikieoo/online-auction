@@ -16,3 +16,13 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
     open-in-view: false
+
+bid:
+  # 입찰 증가 단위(원). 후속 입찰은 현재 최고가 + 이 값을 초과해야 한다.
+  increment: 1000
+
+clients:
+  auction-service:
+    url: http://localhost:8081
+    connect-timeout-ms: 2000
+    read-timeout-ms: 5000
