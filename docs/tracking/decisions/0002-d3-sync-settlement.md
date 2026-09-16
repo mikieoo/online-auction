@@ -21,6 +21,6 @@ D3 시점에는 Kafka가 없다(D8 도입). 그런데 "입찰 → 마감 → 낙
 ## 결과
 
 - 세 서비스만으로 end-to-end가 동작한다. 재시도 경로는 전부 멱등(낙찰 확정은 같은 WINNER, 결제는 같은 idempotencyKey의 기존 건 반환).
-- 결제 완료 전까지 조회 API에서 `winnerId`가 null이다. architecture.md의 목표 흐름("낙찰자 설정 → 결제")과 순서가 다르다.
+- 결제 완료 전까지 조회 API에서 `winnerId`가 null이다. 목표 아키텍처의 흐름("낙찰자 설정 → 결제 요청")과 순서가 반대다.
 - 결제 실패 경매는 D10까지 CLOSED에 머문다.
 - **D9에서 되돌릴 것**: AuctionWon 발행 전에 낙찰자를 확정해야 하므로 winner_id 지연 저장을 걷어내고, 동기 Feign 호출을 이벤트로 대체한다. 그 전까지 이 인코딩을 전제로 하는 코드는 `AuctionSettlementService`와 `AuctionRepository.findByStatusAndWinnerIdIsNull`이다.

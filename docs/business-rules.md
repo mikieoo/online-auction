@@ -18,7 +18,7 @@ CLOSED  ──(낙찰자 결제 성공)──→ COMPLETED
 CLOSED  ──(3회 결제 실패 or 입찰자 소진)──→ FAILED
 ```
 
-- WAITING → ACTIVE: 판매자가 수동으로 시작 API를 호출해야만 전이. start_time 기록. **end_time이 현재 시각 이전이면 시작을 거절한다**(시작 즉시 유찰되는 경매를 막는다).
+- WAITING → ACTIVE: 판매자가 수동으로 시작 API를 호출해야만 전이. start_time 기록. **end_time이 현재 시각 이하이면 시작을 거절한다**(시작 즉시 유찰되는 경매를 막는다).
 - ACTIVE → CLOSED: 스케줄러가 end_time 도달 시 마감. ShedLock으로 인스턴스 간 중복 방지. 마감은 외부 서비스 상태와 무관하게 항상 수행된다.
 - 진행 중(ACTIVE) 경매는 판매자가 취소할 수 없다.
 - CLOSED → FAILED: 낙찰 확정 결과가 "입찰 없음"이면 유찰로 즉시 전이. 낙찰/결제 흐름 없음.
@@ -46,11 +46,12 @@ CLOSED  ──(3회 결제 실패 or 입찰자 소진)──→ FAILED
 ```
 ACTIVE ──(더 높은 입찰)──→ OUTBID
 ACTIVE ──(낙찰 확정)────→ WINNER
-WINNER ──(결제 실패 차순위 승계)──→ OUTBID
+WINNER ──(결제 실패 차순위 승계, D10 미구현)──→ OUTBID
 ```
 
 - 새 입찰이 접수되면 그 경매의 기존 ACTIVE Bid(같은 입찰자의 것이어도)는 OUTBID가 되고 새 Bid가 ACTIVE가 된다. 따라서 "현재 최고가"는 ACTIVE Bid의 금액이다.
 - 낙찰 확정은 ACTIVE Bid를 WINNER로 바꾼다. 이미 WINNER가 있으면 그대로 유지(재확정은 같은 결과). ACTIVE도 WINNER도 없으면 "입찰 없음".
+- WINNER → OUTBID는 차순위 승계(D10)에서 쓰일 전이로, 현재 코드에는 없다(`markOutbid()`는 ACTIVE에서만 허용).
 - 취소 상태는 없다(입찰 철회 불가).
 
 불가능한 전이: OUTBID → ACTIVE, OUTBID → WINNER, WINNER → WINNER.

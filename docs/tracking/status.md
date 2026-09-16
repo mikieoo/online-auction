@@ -20,7 +20,7 @@
 - auction-service: 마감·정산 스케줄러(ShedLock, 5초 주기, 경매별 트랜잭션, Feign은 트랜잭션 밖), bid/payment Feign 클라이언트, `assignWinner` CLOSED 가드, 시작 시 endTime 경과 거절, `AuctionResponse`에 `sellerId`/`startingPrice` 추가, `shedlock` 테이블.
 - payment-service: 멱등 결제 생성 내부 API(`POST /internal/v1/payments`), 금액 접미사(기본 `9999`) 기반 결정적 시뮬레이션, 결제 조회(본인만). Payment 상태 `REQUESTED/COMPLETED/FAILED`, `failure_reason` 컬럼 추가. UNIQUE 위반 시 트랜잭션 밖 재조회.
 - 세 서비스 공통: `@RestControllerAdvice` + `{code, message}` 오류 본문(400/403/404/409/502/503), 요청 DTO bean validation.
-- 검증 상태: 단위 테스트 150개(auction 64, bid 49, payment 37, Mockito) 통과. Docker 없이 `./gradlew clean build` 통과. 세 서비스 실기동 end-to-end 시나리오(입찰 → 마감 → 낙찰 → 결제 성공/실패/유찰, 오류 코드) 확인. Testcontainers 통합 테스트는 없음(built, 단위 테스트만).
+- 검증 상태: 단위 테스트 151개(auction 64, bid 50, payment 37, Mockito) 통과. Docker 없이 `./gradlew clean build` 통과. 세 서비스 실기동 end-to-end 시나리오(입찰 → 마감 → 낙찰 → 결제 성공/실패/유찰, 오류 코드) 확인. Testcontainers 통합 테스트는 없음(built, 단위 테스트만).
 - 인프라: `.gitattributes`로 `*.sh` LF 고정(Windows 체크아웃에서 MySQL init 스크립트 실행 실패 수정). Gradle 빌드 캐시·병렬 빌드 활성화(`gradle.properties`).
 - 문서: D3 블로그 글(`docs/blog/D3-입찰-마감-낙찰-결제.md`).
 

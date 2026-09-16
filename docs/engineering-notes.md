@@ -36,9 +36,9 @@ outbox 테이블은 D1에서 스키마만 생성했다. 실제 Outbox 패턴 구
 
 트랜잭션은 프록시를 거쳐 들어오는 호출에만 적용된다. 같은 빈 안에서 `this.method()`로 `@Transactional` 메서드를 부르면 트랜잭션이 열리지 않는데, 컴파일도 실행도 정상이라 알아채기 어렵다. 이 프로젝트에서는 스케줄러 빈(`AuctionSettlementScheduler`)이 트랜잭션 메서드를 별도 빈(`AuctionSettlementService`)에 두고, 결제 파사드(`PaymentService`)가 트랜잭션 메서드를 `PaymentTransactionService`에 둔 이유가 이것이다. 새 스케줄러나 파사드를 만들 때 같은 구조를 따른다.
 
-## Feign 호출은 DB 트랜잭션 밖에서
+## 다건 순회 경로에서 Feign 호출은 DB 트랜잭션 밖에서
 
-트랜잭션 안에서 원격 호출을 하면 커넥션을 원격 응답 시간(최대 읽기 타임아웃 5초)만큼 점유해 풀이 고갈되고, 원격은 성공했는데 커밋이 실패하면 두 서비스 상태가 어긋난다. 정산 스케줄러는 "Feign 호출 → 결과를 짧은 트랜잭션으로 저장" 순서를 지키며, 경매 1건 = 트랜잭션 1개다. 확인: 스케줄러 빈에 `@Transactional`이 없어야 하고, `AuctionSettlementService`의 메서드는 Feign 클라이언트를 주입받지 않아야 한다.
+정산 스케줄러처럼 여러 경매를 순회하는 경로에서 트랜잭션 안에서 원격 호출을 하면 커넥션을 원격 응답 시간(최대 읽기 타임아웃 5초)만큼 점유해 풀이 고갈되고, 원격은 성공했는데 커밋이 실패하면 두 서비스 상태가 어긋난다. 정산 스케줄러는 "Feign 호출 → 결과를 짧은 트랜잭션으로 저장" 순서를 지키며, 경매 1건 = 트랜잭션 1개다. 확인: 스케줄러 빈에 `@Transactional`이 없어야 하고, `AuctionSettlementService`의 메서드는 Feign 클라이언트를 주입받지 않아야 한다. 예외: bid-service `BidService.placeBid`는 요청 1건당 경매 조회 1회를 `@Transactional` 안에서 한다 — 쓰기 전 검증에 그 값이 필요하고 순회가 없어 커넥션 점유가 요청 1건 범위로 끝나므로 의도적으로 허용했다. D7 분산 락 도입 때 락 → 조회 → 트랜잭션 쓰기 순서로 재구성한다.
 
 ## Feign 연결 실패·타임아웃은 ErrorDecoder를 거치지 않는다
 
@@ -62,7 +62,7 @@ payment-service에서 같은 멱등키로 동시 INSERT가 나면 한쪽이 `Dat
 
 ## 활성화 애너테이션은 Application 클래스가 아니라 config 패키지에
 
-`@EnableFeignClients`, `@EnableScheduling`, `@EnableSchedulerLock`은 각 서비스의 `config` 패키지(`FeignConfig`, `SchedulerConfig`)에 있다. Application 클래스에 두면 컨트롤러 슬라이스 테스트나 Mockito 단위 테스트가 Feign 빈·LockProvider(DataSource)를 요구하게 되어 "DB 없이 빌드 통과" 게이트가 깨진다.
+`@EnableFeignClients`, `@EnableScheduling`, `@EnableSchedulerLock`은 auction·bid-service의 `config` 패키지(`FeignConfig`, `SchedulerConfig`)에 있다(payment-service는 Feign·스케줄러가 없어 config 패키지가 없다). Application 클래스에 두면 컨트롤러 슬라이스 테스트나 Mockito 단위 테스트가 Feign 빈·LockProvider(DataSource)를 요구하게 되어 "DB 없이 빌드 통과" 게이트가 깨진다.
 
 ## Git Bash curl로 한글 JSON 본문을 보내면 400이 난다
 

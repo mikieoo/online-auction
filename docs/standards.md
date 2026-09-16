@@ -20,7 +20,7 @@
 
 - `@EnableFeignClients`, `@EnableScheduling`, `@EnableSchedulerLock` 같은 활성화 애너테이션은 Application 클래스가 아니라 `config` 패키지의 설정 클래스에 둔다.
 - `@Transactional` 메서드를 같은 클래스 안에서 호출하지 않는다(프록시 미적용). 스케줄러·파사드는 트랜잭션 메서드를 별도 빈에 둔다.
-- Feign 호출을 `@Transactional` 메서드 안에서 하지 않는다.
+- 다건을 순회하는 경로(스케줄러·배치)에서는 Feign 호출을 `@Transactional` 메서드 안에서 하지 않는다 — 경매 1건 = 트랜잭션 1개, 원격 호출은 그 사이에서. 요청 1건당 조회 1회인 API 경로(예: 입찰 접수의 경매 조회)는 쓰기 전 검증 값이 필요하므로 한 트랜잭션에 두는 것을 허용한다.
 
 ## REST 인터페이스 규칙
 
@@ -28,7 +28,7 @@
 - 사용자 식별은 `X-User-Id` 헤더(`@RequestHeader`). 요청 본문에 사용자 id를 넣지 않는다.
 - 요청 DTO는 bean validation(`@NotNull`, `@Positive`, `@NotBlank` …)을 붙이고 컨트롤러에서 `@Valid`로 검증한다. 서비스 계층의 도메인 검증은 별개로 유지한다.
 - 예외는 서비스별 도메인 예외 클래스(HTTP 상태·`code`를 가진 예외)로 던지고, 서비스별 `@RestControllerAdvice` 하나가 전부 매핑한다. 컨트롤러에서 `try/catch`로 상태 코드를 만들지 않는다. 원시 `IllegalArgumentException`/`IllegalStateException`을 새로 던지지 않는다(도메인 엔티티의 상태 가드 `IllegalStateException`은 예외 — 처리기가 409로 매핑한다).
-- 오류 본문 형식과 code 집합은 외부 계약(contracts.md)이 단일 원본이다. 새 code를 만들면 거기에 추가한다.
+- 오류 본문 형식(`{code, message}`)과 code 집합의 단일 원본은 외부 인터페이스 계약 문서다. 새 code를 만들면 그 문서에 추가한다.
 - "결과 없음"이 호출자의 비가역 결정(예: 유찰)으로 이어지는 내부 API는 HTTP 404가 아니라 200 + 명시적 본문 필드로 표현한다.
 
 ## 버전 고정
@@ -48,7 +48,16 @@
 - 테이블명: snake_case 단수형. PK: `{테이블명}_id`. 생성 시각 컬럼은 `created_at`.
 - 엔티티 필드는 `@Column(name = "...")`으로 snake_case 컬럼명을 명시한다(암묵 매핑에 의존해 컬럼명이 어긋난 사고가 있었다).
 - 오류 code: 대문자 스네이크 케이스(`AUCTION_NOT_ACTIVE`).
-- 커밋 메시지: 제목은 conventional prefix(`feat:`, `fix:`, `docs:`, `chore:`) + 한국어 요약, 본문은 한국어.
+- 커밋 메시지 규칙은 아래 "커밋" 절 참고.
+
+## 커밋
+
+- 작성자(author)·커미터(committer)는 개인 GitHub 계정 identity(`miki`, 개인 이메일)로 남긴다. 회사 이메일이나 실명 identity로 커밋하지 않는다 — 공개 포트폴리오 저장소이므로 커밋 전 `git config user.name`/`user.email`을 확인한다.
+- `Co-Authored-By:` 트레일러(특히 AI 도구가 자동으로 붙이는 `Co-Authored-By: Claude …`)를 **절대 넣지 않는다**. 도구 자동 첨부는 프로젝트 설정 `.claude/settings.json`(`attribution.commit`/`attribution.pr` = 빈 문자열, `includeCoAuthoredBy: false`)으로 꺼져 있다. 이 파일은 커밋 대상이다. 커밋 후 `git log -1 --format=%B`로 트레일러가 없는지 확인한다.
+- 제목: `<type>: <한국어 요약>` — type은 `feat`, `fix`, `docs`, `chore`, `refactor`, `test` 중 하나(영문 소문자, 콜론 뒤 한 칸). 요약은 한국어, 50자 안팎, 마침표 없음.
+- 본문(선택): 한국어. 무엇을 왜 바꿨는지. "어떻게"는 코드가 말하므로 쓰지 않는다.
+- 브랜치: 작업 브랜치는 `feature/<기능명>` (영문 소문자·하이픈). 날짜나 일차(D3 등)를 브랜치 이름에 쓰지 않는다. 기본 브랜치는 `main`.
+- `./gradlew clean build` exit 0이 아니면 커밋하지 않는다.
 
 ## DB
 
