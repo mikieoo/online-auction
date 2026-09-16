@@ -19,7 +19,8 @@
 │       ├── status.md                  ← 현재 진행 상황
 │       ├── decisions/
 │       │   ├── index.md               ← 결정 기록 색인
-│       │   └── 0001-db-per-service.md ← 서비스별 DB 분리
+│       │   ├── 0001-db-per-service.md ← 서비스별 DB 분리
+│       │   └── 0002-d3-sync-settlement.md ← D3 동기 정산·임시 상태 인코딩
 │       └── findings.md               ← 미해결 문제
 ├── auction-service/AGENTS.md          ← auction-service 모듈 범위
 ├── bid-service/AGENTS.md              ← bid-service 모듈 범위
@@ -32,6 +33,7 @@
 
 - 서비스 간 엔티티·리포지토리 공유 금지. common 모듈에는 이벤트 DTO만 포함.
 - `./gradlew clean build` 통과 없이 커밋하지 않는다.
+- 커밋에 `Co-Authored-By:` 트레일러를 절대 넣지 않는다. 작성자는 개인 계정(miki)이며 회사 이메일로 커밋하지 않는다. 제목 `<type>: 한국어 요약`, 본문 한국어. 브랜치는 `feature/<기능명>`.
 - 동시성·Saga·Outbox·멱등성·Kafka 컨슈머·Terraform·K8s는 "왜 그렇게 했나"에 답할 수준까지 구현.
 - 작업 종료 시 GKE 워크로드를 0으로 내릴 것.
 
@@ -41,6 +43,7 @@
 - `docs/engineering-notes.md` — 알려진 트랩
 - 해당 모듈의 `AGENTS.md` — 모듈 범위와 경계
 - 입찰 로직 수정 전: `docs/business-rules.md`의 입찰 규칙 + 동시성 직렬화 절
+- 스케줄러·서비스 간 호출 수정 전: `docs/engineering-notes.md`의 트랜잭션 경계·Feign·ShedLock 항목, `docs/contracts.md`의 내부 API 계약
 - 상태 전이 변경 전: `docs/business-rules.md`의 상태 전이 다이어그램
 - DB 스키마 변경 전: `docs/engineering-notes.md`의 스키마 관련 항목
 

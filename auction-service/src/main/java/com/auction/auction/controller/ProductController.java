@@ -3,6 +3,7 @@ package com.auction.auction.controller;
 import com.auction.auction.dto.CreateProductRequest;
 import com.auction.auction.dto.ProductResponse;
 import com.auction.auction.service.ProductService;
+import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -22,7 +23,7 @@ public class ProductController {
     @PostMapping
     public ResponseEntity<ProductResponse> createProduct(
             @RequestHeader("X-User-Id") Long userId,
-            @RequestBody CreateProductRequest request) {
+            @Valid @RequestBody CreateProductRequest request) {
         var product = productService.createProduct(userId, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ProductResponse.from(product));

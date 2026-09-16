@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS payment (
     payer_id BIGINT NOT NULL,
     amount DECIMAL(15, 2) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'REQUESTED',
+    failure_reason VARCHAR(255) NULL,
     idempotency_key VARCHAR(64) NOT NULL,
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,

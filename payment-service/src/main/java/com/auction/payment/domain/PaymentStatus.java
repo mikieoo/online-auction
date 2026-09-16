@@ -1,7 +1,7 @@
 package com.auction.payment.domain;
 
 public enum PaymentStatus {
-    PENDING,
+    REQUESTED,
     COMPLETED,
     FAILED
 }

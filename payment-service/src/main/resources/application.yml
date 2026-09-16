@@ -16,3 +16,8 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
     open-in-view: false
+
+payment:
+  simulation:
+    # 금액 정수부(원)가 이 접미사로 끝나면 결제 시뮬레이션 실패(FAILED, SIMULATED_FAILURE)
+    failure-suffix: "9999"
