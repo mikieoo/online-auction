@@ -1,3 +1,4 @@
+.codex-home/
 .dryforge/
 dryforge/
 
@@ -11,3 +12,4 @@ build/
 *.iml
 .vscode/
 *.swp
+codex-local.cmd
