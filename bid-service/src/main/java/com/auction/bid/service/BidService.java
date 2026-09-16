@@ -53,6 +53,10 @@ public class BidService {
      *
      * 동시성: 같은 경매에 대한 동시 입찰은 D7에서 auctionId 기준 분산 락(Redisson)으로 직렬화할 예정.
      * D3에서는 락 없이 동작하므로 동시 요청 시 ACTIVE Bid 유일성이 깨질 수 있음을 알고 있다.
+     *
+     * 트랜잭션 경계: auction-service 조회(Feign)가 이 트랜잭션 안에서 일어난다. 요청 1건당 조회 1회이고 쓰기 전 검증에
+     * 필요한 값이라 의도적으로 한 트랜잭션에 두었다(정산 스케줄러처럼 다건을 순회하는 경로와 다르다). D7에서 분산 락을
+     * 도입할 때 락 획득 → 조회 → 트랜잭션 쓰기 순서로 재구성한다.
      */
     @Transactional
     public Bid placeBid(Long bidderId, PlaceBidRequest request) {

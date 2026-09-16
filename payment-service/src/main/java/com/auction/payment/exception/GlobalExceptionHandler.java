@@ -24,7 +24,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleValidation(MethodArgumentNotValidException e) {
         String message = e.getBindingResult().getFieldErrors().stream()
-                .map(FieldError::getDefaultMessage)
+                .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
                 .collect(Collectors.joining(", "));
         if (message.isBlank()) {
             message = "요청 값이 올바르지 않습니다.";
@@ -47,16 +47,9 @@ public class GlobalExceptionHandler {
         return badRequest("요청 값의 형식이 올바르지 않습니다: " + e.getName());
     }
 
-    @ExceptionHandler(PaymentNotFoundException.class)
-    public ResponseEntity<ErrorResponse> handleNotFound(PaymentNotFoundException e) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(new ErrorResponse("PAYMENT_NOT_FOUND", e.getMessage()));
-    }
-
-    @ExceptionHandler(PaymentAccessDeniedException.class)
-    public ResponseEntity<ErrorResponse> handleForbidden(PaymentAccessDeniedException e) {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                .body(new ErrorResponse("FORBIDDEN", e.getMessage()));
+    @ExceptionHandler(PaymentException.class)
+    public ResponseEntity<ErrorResponse> handlePaymentException(PaymentException e) {
+        return ResponseEntity.status(e.getStatus()).body(new ErrorResponse(e.getCode(), e.getMessage()));
     }
 
     @ExceptionHandler(IllegalStateException.class)
