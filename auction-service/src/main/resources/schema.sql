@@ -34,3 +34,12 @@ CREATE TABLE IF NOT EXISTS outbox (
     published BOOLEAN NOT NULL DEFAULT FALSE,
     INDEX idx_outbox_published_created_at (published, created_at)
 );
+
+-- ShedLock 분산 락 테이블 (스케줄러 다중 인스턴스 중복 실행 방지)
+CREATE TABLE IF NOT EXISTS shedlock (
+    name VARCHAR(64) NOT NULL,
+    lock_until TIMESTAMP(3) NOT NULL,
+    locked_at TIMESTAMP(3) NOT NULL,
+    locked_by VARCHAR(255) NOT NULL,
+    PRIMARY KEY (name)
+);
