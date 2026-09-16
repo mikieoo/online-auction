@@ -76,7 +76,12 @@ public class Auction {
         this.updatedAt = LocalDateTime.now();
     }
 
+    /** 낙찰자 지정은 마감(CLOSED) 이후에만 허용된다. 진행 중이거나 이미 완료/실패한 경매에는 지정 불가. */
     public void assignWinner(Long winnerId, BigDecimal winningPrice) {
+        if (this.status != AuctionStatus.CLOSED) {
+            throw new IllegalStateException(
+                    "낙찰자를 지정할 수 없습니다. 현재 상태: " + this.status);
+        }
         this.winnerId = winnerId;
         this.winningPrice = winningPrice;
         this.updatedAt = LocalDateTime.now();
