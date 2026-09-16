@@ -221,6 +221,17 @@ class BidServiceTest {
         }
 
         @Test
+        @DisplayName("상류 응답에 sellerId/startingPrice가 없으면 UPSTREAM_ERROR(502)로 거절하고 검증을 건너뛰지 않는다")
+        void missingContractFieldsRejected() {
+            when(auctionClient.getAuction(AUCTION_ID)).thenReturn(
+                    new AuctionSummaryResponse(AUCTION_ID, null, null, "ACTIVE", NOW.plusHours(1)));
+
+            assertThatThrownBy(() -> bidService.placeBid(SELLER_ID, request("20000")))
+                    .isInstanceOf(UpstreamErrorException.class);
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
         @DisplayName("판매자 검사는 상태 검사보다 먼저 수행된다")
         void sellerCheckPrecedesStatusCheck() {
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(

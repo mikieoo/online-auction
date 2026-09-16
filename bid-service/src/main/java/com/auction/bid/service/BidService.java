@@ -13,6 +13,7 @@ import com.auction.bid.exception.BidException;
 import com.auction.bid.exception.BidNotFoundException;
 import com.auction.bid.exception.InvalidRequestException;
 import com.auction.bid.exception.SellerCannotBidException;
+import com.auction.bid.exception.UpstreamErrorException;
 import com.auction.bid.exception.UpstreamUnavailableException;
 import com.auction.bid.repository.BidRepository;
 import feign.FeignException;
@@ -68,6 +69,11 @@ public class BidService {
 
         Long auctionId = request.getAuctionId();
         AuctionSummaryResponse auction = fetchAuction(auctionId);
+        if (auction.getSellerId() == null || auction.getStartingPrice() == null) {
+            // 계약상 필수 필드가 비어 있으면 검증을 건너뛰지 않고 상류 오류로 거절한다 (본인 입찰·시작가 검사가 조용히 통과되는 것을 막는다).
+            throw new UpstreamErrorException(
+                    "auction-service 응답에 sellerId/startingPrice가 없습니다. auctionId=" + auctionId);
+        }
 
         if (bidderId.equals(auction.getSellerId())) {
             throw new SellerCannotBidException(auctionId);
@@ -84,7 +90,7 @@ public class BidService {
         Optional<Bid> currentActive = bidRepository.findByAuctionIdAndStatus(auctionId, BidStatus.ACTIVE);
         if (currentActive.isEmpty()) {
             BigDecimal startingPrice = auction.getStartingPrice();
-            if (startingPrice != null && amount.compareTo(startingPrice) < 0) {
+            if (amount.compareTo(startingPrice) < 0) {
                 throw BidAmountTooLowException.belowStartingPrice(amount, startingPrice);
             }
         } else {
