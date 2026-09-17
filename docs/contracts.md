@@ -2,8 +2,9 @@
 
 ## 공통 규약 (REST)
 
-- 경로: 공개 API는 `/api/v1/{복수 리소스}`, 서비스 간 내부 API는 `/internal/v1/...`. Gateway(D4)는 `/api/**`만 라우팅하고 `/internal/**`는 외부에 노출하지 않는다.
-- 인증: 공개 API 중 쓰기·본인 확인이 필요한 요청은 `X-User-Id: {userId}` 헤더가 필수(없으면 400). D3까지는 클라이언트가 직접 넣고, D4부터 Gateway가 JWT를 검증해 넣는다. 내부 API는 헤더 없음(서비스 간 무인증).
+- 공개 진입점은 Gateway `http://localhost:8080` 하나다. 아래 서비스별 표의 포트(8081~8083)는 서비스가 실제로 듣는 포트이며, 직접 호출은 개발·디버깅용이다.
+- 경로: 공개 API는 `/api/v1/{복수 리소스}`, 서비스 간 내부 API는 `/internal/v1/...`. Gateway는 `/api/**`만 라우팅하며 `/internal/**`와 그 밖의 경로는 404 `NOT_FOUND`다.
+- 인증(Gateway 경유): `Authorization: Bearer <JWT>`. 필요한 요청은 `/api/**`의 GET이 아닌 모든 메서드와 `GET /api/v1/payments/**`. 상품·경매·입찰 조회는 토큰 없이 가능. Gateway가 검증 후 `X-User-Id: {userId}`를 붙여 서비스에 전달하고, 클라이언트가 보낸 `X-User-Id`는 버린다. 서비스를 포트로 직접 호출할 때만 `X-User-Id`를 직접 넣는다(없으면 400). 내부 API는 헤더 없음(서비스 간 무인증).
 - 본문: JSON. 금액은 number(소수 2자리, 원), 시각은 ISO-8601 `LocalDateTime`(예: `2026-09-16T23:16:38`), 식별자는 정수.
 - 성공 상태: 생성 201, 조회·변경 200. 멱등 생성 API는 기존 건 반환 시 200.
 - 오류 본문(세 서비스 동일):
@@ -15,6 +16,10 @@
 | HTTP | 의미 | code |
 |---|---|---|
 | 400 | 값 검증 실패(필수 누락, 형식, 음수), 헤더 누락, 본문 파싱 실패 | `INVALID_REQUEST` |
+| 4xx | (Gateway) Gateway 자체 엔드포인트의 그 밖의 4xx(405, 415 등)는 상태 코드를 유지하고 code만 `INVALID_REQUEST` | `INVALID_REQUEST` |
+| 404 | (Gateway) 경로에 `%`, `;`, `\`, `..`, `//`가 포함됨 — 토큰과 무관하게 거절 | `NOT_FOUND` |
+| 401 | (Gateway) 토큰 없음·형식 오류·서명 불일치·sub 형식 오류 | `UNAUTHORIZED` |
+| 401 | (Gateway) 토큰 만료 — 다시 발급받아야 한다 | `TOKEN_EXPIRED` |
 | 400 | 입찰 금액 규칙 위반 | `BID_AMOUNT_TOO_LOW` |
 | 403 | 판매자 본인 경매 입찰 | `SELLER_CANNOT_BID` |
 | 403 | 타인 상품·경매·결제에 대한 요청 | `FORBIDDEN` |
@@ -22,10 +27,22 @@
 | 404 | 매핑되지 않은 경로 | `NOT_FOUND` |
 | 409 | 상태 위반 | `AUCTION_NOT_ACTIVE`, `AUCTION_ALREADY_ENDED`, `ACTIVE_AUCTION_EXISTS`, `INVALID_STATE_TRANSITION` |
 | 502 | 상류 서비스가 예상 밖 4xx 또는 계약 위반 응답 | `UPSTREAM_ERROR` |
-| 503 | 상류 서비스 연결 실패·타임아웃·5xx | `UPSTREAM_UNAVAILABLE` |
+| 503 | 상류 서비스 연결 실패·타임아웃·5xx, 또는 상류 호출 브레이커가 열려 있음 | `UPSTREAM_UNAVAILABLE` |
+| 503 | (Gateway) 대상 서비스에 연결할 수 없거나 브레이커가 열려 있음. message에 서비스 이름 포함 | `SERVICE_UNAVAILABLE` |
 | 500 | 그 외 | `INTERNAL_ERROR` |
 
 `message`는 한국어 설명이며 프로그램 분기에 쓰지 않는다. 분기는 `code`로 한다.
+
+## gateway (8080)
+
+| 메서드·경로 | 요청 | 성공 | 오류 |
+|---|---|---|---|
+| `POST /auth/token` | `{ "userId": 7 }` (양의 정수) | 200 `{ "accessToken": "<JWT>", "tokenType": "Bearer", "expiresIn": 3600 }` | 400 `INVALID_REQUEST`. `local` 프로필이 아니면 경로 자체가 404 `NOT_FOUND` |
+| `/api/v1/products/**`, `/api/v1/auctions/**` | 아래 auction-service 표와 동일 | 하류 응답 그대로 | 401, 503 `SERVICE_UNAVAILABLE` + 하류 오류 그대로 |
+| `/api/v1/bids/**` | 아래 bid-service 표와 동일 | 〃 | 〃 |
+| `/api/v1/payments/**` | 아래 payment-service 표와 동일(GET도 토큰 필요) | 〃 | 〃 |
+
+토큰: HS256, 클레임 `sub`(userId)·`iat`·`exp`, 수명 기본 1시간. 하류 서비스가 돌려준 상태 코드와 오류 본문은 Gateway가 바꾸지 않는다. `SERVICE_UNAVAILABLE`을 받은 클라이언트는 잠시 뒤 재시도한다 — 브레이커는 10초 뒤 시험 호출을 허용한다.
 
 ## auction-service (8081)
 

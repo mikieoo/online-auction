@@ -21,3 +21,14 @@ payment:
   simulation:
     # 금액 정수부(원)가 이 접미사로 끝나면 결제 시뮬레이션 실패(FAILED, SIMULATED_FAILURE)
     failure-suffix: "9999"
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka
+    # 로컬 개발용으로 등록·조회 주기를 줄였다(기본 30초). 서비스를 껐다 켰을 때 전파 지연을 줄인다.
+    registry-fetch-interval-seconds: 5
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 15

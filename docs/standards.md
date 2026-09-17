@@ -16,11 +16,20 @@
 
 ## 패키지 구조
 
-`com.auction.{서비스명}.{계층}` — 계층: `controller`, `service`, `domain`, `repository`, `dto`, `exception`, `client`(Feign 클라이언트와 그 DTO), `config`(활성화 애너테이션·빈 설정), `scheduler`, `event`.
+`com.auction.{서비스명}.{계층}` — 계층: `controller`, `service`, `domain`, `repository`, `dto`, `exception`, `client`(Feign 클라이언트와 그 DTO), `config`(활성화 애너테이션·빈 설정), `scheduler`, `event`. gateway는 여기에 `filter`, `security`를 더 쓴다. 모듈: `common`, `discovery-service`(로컬 전용 Eureka), `auction-service`, `bid-service`, `payment-service`, `gateway`.
 
 - `@EnableFeignClients`, `@EnableScheduling`, `@EnableSchedulerLock` 같은 활성화 애너테이션은 Application 클래스가 아니라 `config` 패키지의 설정 클래스에 둔다.
 - `@Transactional` 메서드를 같은 클래스 안에서 호출하지 않는다(프록시 미적용). 스케줄러·파사드는 트랜잭션 메서드를 별도 빈에 둔다.
 - 다건을 순회하는 경로(스케줄러·배치)에서는 Feign 호출을 `@Transactional` 메서드 안에서 하지 않는다 — 경매 1건 = 트랜잭션 1개, 원격 호출은 그 사이에서. 요청 1건당 조회 1회인 API 경로(예: 입찰 접수의 경매 조회)는 쓰기 전 검증 값이 필요하므로 한 트랜잭션에 두는 것을 허용한다.
+
+## Circuit Breaker 규칙
+
+- 브레이커 이름은 대상 서비스 이름과 같게 한다. Feign 브레이커는 `CircuitBreakerNameResolver` 빈으로 Feign 클라이언트 이름을 쓰게 한다 — 기본 이름(메서드 시그니처)으로 두면 yml 설정이 매칭되지 않는다. 리졸버가 돌려주는 이름과 yml 키가 달라지면 `ignore-exceptions`가 오류 없이 빠진다.
+- 업무상 4xx는 브레이커 실패로 세지 않는다(`ignore-exceptions`). 새 Feign 클라이언트·ErrorDecoder를 추가하면 4xx가 어떤 예외 타입으로 올라오는지 확인하고 ignore 목록을 맞춘다.
+- fallback은 값을 지어내지 않는다. 최신 상태 없이 판단할 수 없는 호출(입찰의 경매 조회)은 빠르게 거절한다. fallback에서 업무 예외(404 등)는 그대로 다시 던진다 — Resilience4j는 ignore한 예외에도 fallback을 호출한다.
+- 서비스 모듈의 브레이커는 TimeLimiter를 끈다(`spring.cloud.circuitbreaker.resilience4j.disableTimeLimiter: true`). 타임아웃은 Feign connect/read 하나로만 관리한다. Gateway 라우트의 TimeLimiter는 유지하되 가장 긴 하류 처리 시간보다 길게 둔다.
+- `resilience4j-bulkhead`를 클래스패스에 추가하지 않는다. 추가되면 브레이커 호출이 스레드 풀로 옮겨져 호출자 스레드(트랜잭션·MDC) 가정이 깨진다.
+- Gateway 라우트의 CircuitBreaker 필터에 `statusCodes`를 넣지 않는다(하류의 HTTP 응답은 실패가 아니다).
 
 ## REST 인터페이스 규칙
 
@@ -36,9 +45,10 @@
 | 항목 | 버전 |
 |------|------|
 | Java | 17 (sourceCompatibility) |
-| Spring Boot | 3.3.5 |
+| Spring Boot | 3.3.13 (3.3.5는 Spring Cloud 2023.0.4의 Gateway와 맞지 않는다 — Spring Framework 6.1.15 미만에서 라우팅이 NoSuchMethodError로 실패) |
 | Spring Cloud | 2023.0.4 (OpenFeign 포함) |
 | ShedLock | 5.16.0 |
+| jjwt | 0.12.6 (gateway) |
 | MySQL | 8.0 |
 | Gradle | 8.10 (wrapper), 빌드 캐시·병렬 빌드 활성화(`gradle.properties`) |
 
@@ -68,11 +78,14 @@
 
 ## 설정
 
-- 서비스 간 호출 대상 주소는 `clients.{서비스명}.url`, 타임아웃은 `clients.{서비스명}.connect-timeout-ms` / `read-timeout-ms`. D4에서 Eureka로 전환하기 전까지 고정 URL.
+- 서비스 간 호출 대상은 Eureka 서비스 이름으로 찾는다. `clients.{서비스명}.url`은 기본값이 없고, 값을 주면 그 고정 주소를 쓰는 오버라이드다. 타임아웃은 `clients.{서비스명}.connect-timeout-ms` / `read-timeout-ms`.
+- JWT 서명 키(`JWT_SECRET`)에 기본값을 두지 않는다. main 코드·yml·프로필 설정 어디에도 키를 넣지 않는다.
+- 테스트는 Eureka 없이 돌아야 한다. 컨텍스트를 띄우는 테스트(gateway)는 `eureka.client.enabled=false`를 준다.
 - 스케줄러 주기·배치 상한은 `scheduler.{이름}.*`. 결제 시뮬레이션 규칙은 `payment.simulation.*`. 입찰 증가 단위는 `bid.increment`.
 - 셸 스크립트(`*.sh`)는 `.gitattributes`로 LF 고정. CRLF로 커밋하면 컨테이너에서 실행되지 않는다.
 
 ## 테스트
 
 - 핵심 비즈니스 로직(입찰 검증, 정산 분기, 결제 멱등성, 상태 전이) 우선 커버. JUnit 5 + Mockito 단위 테스트. 컨트롤러·예외 처리기는 `MockMvcBuilders.standaloneSetup(...)`로 검증한다.
+- gateway는 DataSource가 없으므로 컨텍스트 테스트(`@SpringBootTest` + `WebTestClient`)를 허용한다. 서비스 모듈은 컨텍스트 테스트를 두지 않는다.
 - Testcontainers 통합 테스트는 아직 도입하지 않았다(빌드가 Docker에 의존하지 않게 하려는 결정). 도입 시 별도 Gradle 태스크로 분리해 `clean build`의 Docker 무의존성을 유지한다.

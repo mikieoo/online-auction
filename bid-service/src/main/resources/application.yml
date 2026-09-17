@@ -16,6 +16,16 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
     open-in-view: false
+  cloud:
+    openfeign:
+      circuitbreaker:
+        # Feign 호출을 서킷 브레이커로 감싼다. 브레이커 이름은 FeignConfig의 CircuitBreakerNameResolver가 클라이언트 이름으로 고정.
+        enabled: true
+    circuitbreaker:
+      resilience4j:
+        # 타임아웃 장치는 Feign connect/read 타임아웃 하나만 쓴다. TimeLimiter를 켜 두면 기본 1초로 먼저 끊긴다.
+        # 꺼져 있으면 Feign 호출은 별도 스레드가 아니라 호출자 스레드에서 실행된다.
+        disableTimeLimiter: true
 
 bid:
   # 입찰 증가 단위(원). 후속 입찰은 현재 최고가 + 이 값을 초과해야 한다.
@@ -23,6 +33,49 @@ bid:
 
 clients:
   auction-service:
-    url: http://localhost:8081
+    # 기본은 비워 둔다 → Eureka + Spring Cloud LoadBalancer로 "auction-service"를 찾는다.
+    # 디스커버리 없이 단독 실행할 때만 아래처럼 직접 주소를 준다(선택 재정의).
+    # url: http://localhost:8081
     connect-timeout-ms: 2000
     read-timeout-ms: 5000
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka
+    # 기본 30초면 상대 인스턴스가 뜨거나 내려간 것을 너무 늦게 안다. 로컬·데모에서 빠르게 반영되도록 5초.
+    registry-fetch-interval-seconds: 5
+  instance:
+    # 호스트명 대신 IP로 등록한다 (컨테이너/K8s에서 호스트명이 해석되지 않는 경우 대비).
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 15
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+    instances:
+      auction-service:
+        base-config: default
+        # 상류가 "정상적으로 거절"한 응답(404 경매 없음, 그 외 4xx → 502)은 장애가 아니므로 실패율에 넣지 않는다.
+        # 실패로 집계되는 것: UpstreamUnavailableException(5xx), 연결 실패·타임아웃(FeignException).
+        ignore-exceptions:
+          - com.auction.bid.exception.AuctionNotFoundException
+          - com.auction.bid.exception.UpstreamErrorException
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,circuitbreakers,circuitbreakerevents
+  health:
+    circuitbreakers:
+      enabled: true

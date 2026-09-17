@@ -1,6 +1,7 @@
 rootProject.name = 'auction-platform'
 
 include 'common'
+include 'discovery-service'
 include 'auction-service'
 include 'bid-service'
 include 'payment-service'

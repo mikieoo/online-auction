@@ -1,6 +1,6 @@
 # 온라인 경매 시스템
 
-1인 개발 30일 MSA 학습 + 포트폴리오 프로젝트. 서비스 3개(auction / bid / payment) + Gateway, Gradle 멀티 모듈. GCP 프리티어/$300 크레딧 범위 내 운영.
+1인 개발 30일 MSA 학습 + 포트폴리오 프로젝트. 서비스 3개(auction / bid / payment) + Gateway + 로컬 전용 Eureka 서버(discovery-service), Gradle 멀티 모듈. GCP 프리티어/$300 크레딧 범위 내 운영.
 
 ## 문서 구조
 
@@ -20,12 +20,14 @@
 │       ├── decisions/
 │       │   ├── index.md               ← 결정 기록 색인
 │       │   ├── 0001-db-per-service.md ← 서비스별 DB 분리
-│       │   └── 0002-d3-sync-settlement.md ← D3 동기 정산·임시 상태 인코딩
+│       │   ├── 0002-d3-sync-settlement.md ← D3 동기 정산·임시 상태 인코딩
+│       │   └── 0003-circuit-breaker-placement.md ← 브레이커 배치·fallback 의미
 │       └── findings.md               ← 미해결 문제
 ├── auction-service/AGENTS.md          ← auction-service 모듈 범위
 ├── bid-service/AGENTS.md              ← bid-service 모듈 범위
 ├── payment-service/AGENTS.md          ← payment-service 모듈 범위
 ├── gateway/AGENTS.md                  ← gateway 모듈 범위
+├── discovery-service/AGENTS.md        ← discovery-service(로컬 Eureka) 모듈 범위
 └── common/AGENTS.md                   ← common 모듈 범위
 ```
 
@@ -44,6 +46,9 @@
 - 해당 모듈의 `AGENTS.md` — 모듈 범위와 경계
 - 입찰 로직 수정 전: `docs/business-rules.md`의 입찰 규칙 + 동시성 직렬화 절
 - 스케줄러·서비스 간 호출 수정 전: `docs/engineering-notes.md`의 트랜잭션 경계·Feign·ShedLock 항목, `docs/contracts.md`의 내부 API 계약
+- Gateway 인증·라우팅 수정 전: `docs/security.md`의 인증 흐름·알려진 한계, `gateway/AGENTS.md`의 불변 조건
+- Circuit Breaker·fallback·Feign 클라이언트 수정 전: `docs/standards.md`의 Circuit Breaker 규칙, `docs/engineering-notes.md`의 브레이커 관련 항목
+- Spring Boot·Spring Cloud 버전 변경 전: `docs/engineering-notes.md`의 버전 불일치 항목(변경 후 Gateway 경유 요청을 실제로 확인)
 - 상태 전이 변경 전: `docs/business-rules.md`의 상태 전이 다이어그램
 - DB 스키마 변경 전: `docs/engineering-notes.md`의 스키마 관련 항목
 
