@@ -22,7 +22,7 @@
 - 세 서비스 공통: `@RestControllerAdvice` + `{code, message}` 오류 본문(400/403/404/409/502/503), 요청 DTO bean validation.
 - 검증 상태: 단위 테스트 151개(auction 64, bid 50, payment 37, Mockito) 통과. Docker 없이 `./gradlew clean build` 통과. 세 서비스 실기동 end-to-end 시나리오(입찰 → 마감 → 낙찰 → 결제 성공/실패/유찰, 오류 코드) 확인. Testcontainers 통합 테스트는 없음(built, 단위 테스트만).
 - 인프라: `.gitattributes`로 `*.sh` LF 고정(Windows 체크아웃에서 MySQL init 스크립트 실행 실패 수정). Gradle 빌드 캐시·병렬 빌드 활성화(`gradle.properties`).
-- 문서: D3 일일 정리본(`docs/blog/D3-입찰-마감-낙찰-결제.md`).
+- 문서: D3 일일 정리본(`docs/notes/D3-입찰-마감-낙찰-결제.md`).
 
 ## 완료 (D4)
 
@@ -33,7 +33,7 @@
 - Actuator(gateway·auction·bid): `health`, `circuitbreakers`, `circuitbreakerevents`.
 - Spring Boot 3.3.5 → 3.3.13 (Spring Cloud 2023.0.4 Gateway와의 NoSuchMethodError 해소).
 - 검증 상태: 단위·컨텍스트 테스트 196개(auction 71, bid 61, payment 37, gateway 27) 통과, Docker·DB·Eureka 없이 `./gradlew clean build` 통과. 실기동(Eureka + 세 서비스 + Gateway, Gateway는 이 PC의 8080 충돌로 8090에서 실행) 확인: 토큰 발급 → 입찰 → 마감 → COMPLETED, 401(무토큰·조작 토큰), 위조 `X-User-Id` 무시, `/internal/**` 404, 없는 경매 입찰 8회에도 브레이커 CLOSED, bid-service 종료 시 Gateway 503·브레이커 OPEN(응답 약 2초 → 14ms)·auction-service 브레이커 OPEN·경매 `CLOSED + 낙찰자 없음` 유지, 재기동 후 밀린 경매 전부 COMPLETED. 확인하지 못한 것: payment-service 종료 시나리오, 만료 토큰의 실기동 확인(단위 테스트로만 검증).
-- 문서: D4 일일 정리본(`docs/blog/D4-gateway-eureka-circuit-breaker.md`).
+- 문서: D4 일일 정리본(`docs/notes/D4-gateway-eureka-circuit-breaker.md`).
 
 ### D3의 임시 구조 (이후 일차에서 교체)
 
