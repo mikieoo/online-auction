@@ -16,6 +16,16 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
     open-in-view: false
+  cloud:
+    openfeign:
+      circuitbreaker:
+        # Feign 호출을 서킷 브레이커로 감싼다. 브레이커 이름은 FeignConfig의 CircuitBreakerNameResolver가 클라이언트 이름으로 고정한다.
+        enabled: true
+    circuitbreaker:
+      resilience4j:
+        # 타임아웃 수단은 Feign connect/read 타임아웃 하나만 둔다. TimeLimiter(기본 1s)를 켜 두면
+        # read-timeout 5s보다 먼저 끊겨 타임아웃 기준이 두 군데로 갈린다.
+        disableTimeLimiter: true
 
 scheduler:
   auction:
@@ -26,14 +36,61 @@ scheduler:
     # 예: 50건 × (bid 5s + payment 5s 읽기 타임아웃) = 최악 500s > lockAtMostFor 30s.
     # 정상 응답 시엔 수십 ms/건이라 문제 없지만, 다운스트림이 전부 타임아웃 나는 상황에서는
     # 이 값을 줄이거나 lockAtMostFor(SchedulerConfig)를 늘려야 한다. 중복 실행돼도 모든 호출은 멱등이라 데이터는 깨지지 않는다.
+    # 서킷 브레이커가 OPEN이 되면 스케줄러가 그 틱의 남은 정산을 즉시 중단하므로 최악 시간은 크게 줄어든다.
+    # 다만 브레이커가 열리기까지의 실패 호출(minimum-number-of-calls 5건 안팎 × 타임아웃)은 그대로 걸리므로
+    # 첫 장애 틱은 여전히 30s 근처까지 갈 수 있다 — 위 주의는 유효하다.
     settlement-batch-size: 50
 
+# 기본은 Eureka + Spring Cloud LoadBalancer로 대상을 찾는다(url 미지정).
+# 디스커버리 없이 띄울 때만 아래처럼 url을 직접 지정한다(선택).
+#   clients.bid-service.url: http://localhost:8082
+#   clients.payment-service.url: http://localhost:8083
 clients:
   bid-service:
-    url: http://localhost:8082
     connect-timeout-ms: 2000
     read-timeout-ms: 5000
   payment-service:
-    url: http://localhost:8083
     connect-timeout-ms: 2000
     read-timeout-ms: 5000
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka
+    # 기본 30s면 상대 서비스 재기동 후 새 주소를 받기까지 너무 오래 걸린다.
+    registry-fetch-interval-seconds: 5
+  instance:
+    # 호스트명 대신 IP로 등록 — 컨테이너/K8s에서 호스트명이 서로 해석되지 않는 경우를 피한다.
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 15
+
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        automatic-transition-from-open-to-half-open-enabled: true
+        # 4xx는 상대 서비스가 살아서 업무적으로 거절한 것이므로 브레이커를 열면 안 된다(성공·실패 어느 쪽으로도 세지 않는다).
+        # 이 모듈은 ErrorDecoder가 없어 4xx가 이 타입으로 올라온다.
+        # 5xx(FeignServerException)·연결 실패·타임아웃(RetryableException)은 실패로 센다.
+        ignore-exceptions:
+          - feign.FeignException.FeignClientException
+    # 인스턴스 이름 = Feign 클라이언트 이름(CircuitBreakerNameResolver).
+    # 폴백 값은 두지 않는다 — 실패는 스케줄러가 저장 없이 다음 주기에 재시도한다.
+    instances:
+      bid-service:
+        base-config: default
+      payment-service:
+        base-config: default
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,circuitbreakers,circuitbreakerevents
