@@ -11,6 +11,8 @@ import com.auction.auction.dto.SettlementTarget;
 import com.auction.auction.service.AuctionSettlementService;
 import feign.FeignException;
 import feign.RetryableException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -20,6 +22,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.cloud.client.circuitbreaker.NoFallbackAvailableException;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -306,6 +309,129 @@ class AuctionSettlementSchedulerTest {
             verify(settlementService, never()).completeWithWinner(anyLong(), anyLong(), any());
             verify(settlementService, never()).recordPaymentFailed(anyLong(), anyLong(), any());
             verify(settlementService, never()).closeAuction(anyLong());
+        }
+    }
+
+    // ---------- B단계: 서킷 브레이커 ----------
+
+    @Nested
+    @DisplayName("B단계 정산 — 서킷 브레이커 예외")
+    class CircuitBreakerStep {
+
+        private CallNotPermittedException breakerOpen() {
+            return CallNotPermittedException.createCallNotPermittedException(CircuitBreaker.ofDefaults("bid-service"));
+        }
+
+        private NoFallbackAvailableException noFallback(Throwable cause) {
+            return new NoFallbackAvailableException("No fallback available.", cause);
+        }
+
+        @Test
+        @DisplayName("bid 클라이언트가 NoFallbackAvailableException(원인 FeignException) → 저장 없음, 다음 경매는 계속 처리")
+        void bidNoFallbackWrappingFeignSavesNothingAndContinues() {
+            when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of());
+            when(settlementService.findSettlementTargets(BATCH_SIZE))
+                    .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
+            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(noFallback(mock(FeignException.class)));
+            when(bidClient.confirmWinner(OTHER_AUCTION_ID)).thenReturn(noBids(OTHER_AUCTION_ID));
+
+            scheduler.settle();
+
+            verify(settlementService, never()).markNoBids(AUCTION_ID);
+            verify(settlementService).markNoBids(OTHER_AUCTION_ID);
+            verify(settlementService, never()).completeWithWinner(anyLong(), anyLong(), any());
+            verify(settlementService, never()).recordPaymentFailed(anyLong(), anyLong(), any());
+            verifyNoInteractions(paymentClient);
+        }
+
+        @Test
+        @DisplayName("payment 클라이언트가 NoFallbackAvailableException(원인 FeignException) → 저장 없음, 다음 경매는 계속 처리")
+        void paymentNoFallbackWrappingFeignSavesNothingAndContinues() {
+            when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of());
+            when(settlementService.findSettlementTargets(BATCH_SIZE))
+                    .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
+            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
+            when(paymentClient.requestPayment(any(PaymentRequest.class)))
+                    .thenThrow(noFallback(mock(FeignException.class)));
+            when(bidClient.confirmWinner(OTHER_AUCTION_ID)).thenReturn(noBids(OTHER_AUCTION_ID));
+
+            scheduler.settle();
+
+            verify(settlementService).markNoBids(OTHER_AUCTION_ID);
+            verify(settlementService, never()).completeWithWinner(anyLong(), anyLong(), any());
+            verify(settlementService, never()).recordPaymentFailed(anyLong(), anyLong(), any());
+        }
+
+        @Test
+        @DisplayName("첫 대상에서 CallNotPermittedException(브레이커 OPEN) → 남은 대상은 시도조차 하지 않고 저장도 없다")
+        void breakerOpenStopsRemainingTargets() {
+            when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of());
+            when(settlementService.findSettlementTargets(BATCH_SIZE))
+                    .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0), target(3L, 0)));
+            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(breakerOpen());
+
+            scheduler.settle();
+
+            verify(bidClient).confirmWinner(AUCTION_ID);
+            verify(bidClient, never()).confirmWinner(OTHER_AUCTION_ID);
+            verify(bidClient, never()).confirmWinner(3L);
+            verifyNoInteractions(paymentClient);
+            verifyNoSettlementWrites();
+        }
+
+        @Test
+        @DisplayName("NoFallbackAvailableException에 싸인 CallNotPermittedException도 OPEN으로 판정해 남은 대상을 건너뛴다")
+        void wrappedBreakerOpenStopsRemainingTargets() {
+            when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of());
+            when(settlementService.findSettlementTargets(BATCH_SIZE))
+                    .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
+            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(noFallback(breakerOpen()));
+
+            scheduler.settle();
+
+            verify(bidClient).confirmWinner(AUCTION_ID);
+            verify(bidClient, never()).confirmWinner(OTHER_AUCTION_ID);
+            verifyNoInteractions(paymentClient);
+            verifyNoSettlementWrites();
+        }
+
+        @Test
+        @DisplayName("payment 브레이커 OPEN이어도 남은 대상을 건너뛴다(앞서 성공한 bid 응답은 저장하지 않는다)")
+        void paymentBreakerOpenStopsRemainingTargets() {
+            when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of());
+            when(settlementService.findSettlementTargets(BATCH_SIZE))
+                    .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
+            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
+            when(paymentClient.requestPayment(any(PaymentRequest.class))).thenThrow(breakerOpen());
+
+            scheduler.settle();
+
+            verify(bidClient, never()).confirmWinner(OTHER_AUCTION_ID);
+            verifyNoSettlementWrites();
+        }
+
+        @Test
+        @DisplayName("브레이커 OPEN으로 B단계가 중단돼도 A단계(마감)는 먼저 실행되어 전부 완료된다")
+        void closeStepCompletesBeforeBreakerOpenStop() {
+            when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of(10L, 11L));
+            when(settlementService.findSettlementTargets(BATCH_SIZE))
+                    .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
+            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(breakerOpen());
+
+            scheduler.settle();
+
+            InOrder inOrder = inOrder(settlementService, bidClient);
+            inOrder.verify(settlementService).closeAuction(10L);
+            inOrder.verify(settlementService).closeAuction(11L);
+            inOrder.verify(bidClient).confirmWinner(AUCTION_ID);
+            verify(bidClient, never()).confirmWinner(OTHER_AUCTION_ID);
+            verifyNoSettlementWrites();
+        }
+
+        private void verifyNoSettlementWrites() {
+            verify(settlementService, never()).markNoBids(anyLong());
+            verify(settlementService, never()).completeWithWinner(anyLong(), anyLong(), any());
+            verify(settlementService, never()).recordPaymentFailed(anyLong(), anyLong(), any());
         }
     }
 }
