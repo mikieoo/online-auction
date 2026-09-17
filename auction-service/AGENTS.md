@@ -17,7 +17,9 @@
 - `assignWinner`는 CLOSED에서만. 낙찰자는 결제 결과와 함께 저장한다(COMPLETED 또는 결제 실패 기록). `CLOSED + winner_id NULL`이 정산 재시도 대상이므로, 결제 결과를 받기 전에 winner_id를 채우는 코드는 정산을 멈추게 한다.
 - 시작 시 end_time이 현재 이전이면 거절(409 AUCTION_ALREADY_ENDED).
 - 스케줄러 빈에는 `@Transactional`을 두지 않는다. DB 작업은 `AuctionSettlementService`(경매 1건 = 트랜잭션 1개), Feign 호출은 그 사이에서. 한 경매의 예외는 로그 후 다음 경매로.
-- 낙찰 확정 응답의 "입찰 없음"은 `hasBids=false`로만 판정한다. Feign 예외(404 포함)는 전부 "저장 없이 다음 주기 재시도".
+- 낙찰 확정 응답의 "입찰 없음"은 `hasBids=false`로만 판정한다. 클라이언트 호출에서 나온 **모든 예외**(FeignException, `NoFallbackAvailableException`, `CallNotPermittedException`, 그 래핑)는 "저장 없이 다음 주기 재시도".
+- BidClient·PaymentClient에는 Circuit Breaker가 걸려 있고 fallback 값이 없다. 브레이커가 OPEN이면 스케줄러는 그 주기의 남은 정산을 중단한다(마감 A단계는 영향 없음). 4xx(`FeignClientException`)는 브레이커 실패로 세지 않는다 — 이 모듈에 ErrorDecoder를 추가하면 4xx의 예외 타입이 바뀌어 ignore 목록에서 빠지므로 함께 고쳐야 한다.
+- 브레이커 이름은 Feign 클라이언트 이름(`bid-service`, `payment-service`). `FeignConfig`의 `CircuitBreakerNameResolver`를 없애면 yml 설정이 조용히 적용되지 않는다.
 - version 필드로 낙관적 락 지원 (D6에서 적용).
 
 ## 구현 패턴
@@ -25,6 +27,8 @@
 - 패키지: `controller`(공개 API), `service`(AuctionService — API용, AuctionSettlementService — 스케줄러용 트랜잭션 단위), `scheduler`, `client`(BidClient, PaymentClient + 자체 DTO), `config`(FeignConfig, SchedulerConfig, 클라이언트별 타임아웃), `exception`(도메인 예외 + GlobalExceptionHandler), `dto`, `domain`, `repository`.
 - `AuctionService`는 `AuctionResponse`(Product의 sellerId·startingPrice 포함)를 반환한다. 스케줄러는 이 서비스를 쓰지 않고 리포지토리·`AuctionSettlementService`로 엔티티를 다룬다.
 - 결제 멱등키는 `PaymentRequest.idempotencyKeyOf(auctionId, winnerId, reassignmentCount)` 한 곳에서만 만든다.
+- 스케줄러는 두 클라이언트 호출을 `callExternal(...)`로 감싸 외부 호출 실패(`ExternalCallFailedException`)와 DB 저장 실패를 타입으로 구분한다. 새 외부 호출을 추가하면 같은 헬퍼로 감싼다.
+- 호출 대상은 Eureka 서비스 이름으로 찾는다. `clients.bid-service.url`·`clients.payment-service.url`을 주면 고정 주소를 쓴다(discovery 없이 단독 실행).
 - 활성화 애너테이션(`@EnableFeignClients`, `@EnableScheduling`, `@EnableSchedulerLock`)은 `config`에. Application 클래스에 옮기면 단위 테스트가 DataSource·Feign 빈을 요구하게 된다.
 
 ## DB
@@ -37,6 +41,7 @@ auction_db — product, auction, outbox, shedlock 테이블. 스키마 원본: `
 - 상태 전이 규칙 (불가능한 전이 시도 시 거부), assignWinner의 CLOSED 가드
 - 시작 시 endTime 경과 거절
 - 정산 분기: 입찰 없음 → FAILED / COMPLETED → winner+COMPLETED / FAILED → winner+CLOSED 유지 / Feign 실패·REQUESTED → 변경 없음 / 한 경매 예외가 다음 경매를 막지 않음 / 멱등키 형식
+- 브레이커: 래핑된 Feign 실패에서 저장 없음, `CallNotPermittedException`에서 남은 대상 미호출, 저장 계층 예외는 다음 경매 계속
 - 예외 처리기의 상태·code 매핑
 - 차순위 승계 흐름 (최대 3회, 입찰자 소진 시 FAILED) — D10
 - 테스트는 Mockito + MockMvc standalone. DataSource를 띄우지 않는다.

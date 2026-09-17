@@ -24,6 +24,17 @@
 - 인프라: `.gitattributes`로 `*.sh` LF 고정(Windows 체크아웃에서 MySQL init 스크립트 실행 실패 수정). Gradle 빌드 캐시·병렬 빌드 활성화(`gradle.properties`).
 - 문서: D3 블로그 글(`docs/blog/D3-입찰-마감-낙찰-결제.md`).
 
+## 완료 (D4)
+
+- discovery-service(Eureka 서버, 8761) 모듈 추가. gateway·auction·bid·payment가 Eureka에 등록, Feign은 서비스 이름으로 호출(`clients.*.url`은 선택적 오버라이드).
+- gateway: `/api/**` 라우팅(`lb://`), `/internal/**` 차단(404), JWT(HS256) 검증 → `X-User-Id` 주입·클라이언트 값 제거, `local` 프로필 전용 `POST /auth/token`, 라우트별 Circuit Breaker + 503 fallback, Gateway 오류의 표준 본문.
+- bid-service: 경매 조회 Feign에 Circuit Breaker + FallbackFactory(업무 404·502는 그대로, 그 외 503 빠른 거절), 업무 4xx는 브레이커 실패에서 제외.
+- auction-service: 낙찰 확정·결제 Feign에 Circuit Breaker(4xx 제외), 스케줄러가 브레이커 OPEN 시 그 주기의 남은 정산 중단.
+- Actuator(gateway·auction·bid): `health`, `circuitbreakers`, `circuitbreakerevents`.
+- Spring Boot 3.3.5 → 3.3.13 (Spring Cloud 2023.0.4 Gateway와의 NoSuchMethodError 해소).
+- 검증 상태: 단위·컨텍스트 테스트 196개(auction 71, bid 61, payment 37, gateway 27) 통과, Docker·DB·Eureka 없이 `./gradlew clean build` 통과. 실기동(Eureka + 세 서비스 + Gateway, Gateway는 이 PC의 8080 충돌로 8090에서 실행) 확인: 토큰 발급 → 입찰 → 마감 → COMPLETED, 401(무토큰·조작 토큰), 위조 `X-User-Id` 무시, `/internal/**` 404, 없는 경매 입찰 8회에도 브레이커 CLOSED, bid-service 종료 시 Gateway 503·브레이커 OPEN(응답 약 2초 → 14ms)·auction-service 브레이커 OPEN·경매 `CLOSED + 낙찰자 없음` 유지, 재기동 후 밀린 경매 전부 COMPLETED. 확인하지 못한 것: payment-service 종료 시나리오, 만료 토큰의 실기동 확인(단위 테스트로만 검증).
+- 문서: D4 블로그 글(`docs/blog/D4-gateway-eureka-circuit-breaker.md`).
+
 ### D3의 임시 구조 (이후 일차에서 교체)
 
 - 낙찰 → 결제가 auction-service의 동기 Feign 호출. D9에서 AuctionWon Kafka 이벤트로 대체.
@@ -33,7 +44,6 @@
 
 ## 남은 범위
 
-- **D4:** Gateway + Eureka + Circuit Breaker. Gateway는 `/api/**`만 라우팅, `/internal/**` 차단. Feign 대상 주소를 고정 URL(`clients.*.url`)에서 서비스 이름으로 전환.
 - **D5:** gRPC 전환 (auction↔bid 1구간)
 - **D6~D7:** 동시성 제어 (낙관적 락 → 분산 락 비교), CI 파이프라인, Terraform 시작
 - **D8~D13:** Kafka, Saga(낙찰→결제 이벤트화, 차순위 승계), Outbox, 멱등 컨슈머, Retry/DLQ
