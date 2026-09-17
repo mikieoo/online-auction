@@ -16,8 +16,6 @@ import com.auction.bid.exception.SellerCannotBidException;
 import com.auction.bid.exception.UpstreamErrorException;
 import com.auction.bid.exception.UpstreamUnavailableException;
 import com.auction.bid.repository.BidRepository;
-import feign.FeignException;
-import feign.RetryableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -38,7 +36,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -257,10 +254,11 @@ class BidServiceTest {
         }
 
         @Test
-        @DisplayName("연결 실패·타임아웃(RetryableException)은 UPSTREAM_UNAVAILABLE(503)로 변환된다")
+        @DisplayName("연결 실패·타임아웃·서킷 OPEN(fallback이 만든 UpstreamUnavailableException)은 UPSTREAM_UNAVAILABLE(503)로 전달된다")
         void connectionFailureMappedTo503() {
-            RetryableException connectionRefused = mock(RetryableException.class);
-            when(auctionClient.getAuction(AUCTION_ID)).thenThrow(connectionRefused);
+            // FeignException → 503 변환은 AuctionClientFallbackFactory가 한다. 클라이언트 경계 밖으로는 이미 변환된 예외만 나온다.
+            when(auctionClient.getAuction(AUCTION_ID)).thenThrow(
+                    new UpstreamUnavailableException("auction-service에 연결할 수 없습니다. auctionId=" + AUCTION_ID));
 
             assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("20000")))
                     .isInstanceOf(UpstreamUnavailableException.class)
@@ -270,13 +268,13 @@ class BidServiceTest {
         }
 
         @Test
-        @DisplayName("기타 FeignException도 UPSTREAM_UNAVAILABLE(503)로 변환된다")
-        void genericFeignExceptionMappedTo503() {
-            FeignException feignException = mock(FeignException.class);
-            when(auctionClient.getAuction(AUCTION_ID)).thenThrow(feignException);
+        @DisplayName("상류 응답이 비어 있으면(null) UPSTREAM_UNAVAILABLE(503)로 거절하고 저장하지 않는다")
+        void nullResponseMappedTo503() {
+            when(auctionClient.getAuction(AUCTION_ID)).thenReturn(null);
 
             assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("20000")))
                     .isInstanceOf(UpstreamUnavailableException.class);
+            verify(bidRepository, never()).save(any());
         }
 
         @Test

@@ -9,14 +9,12 @@ import com.auction.bid.dto.WinnerResponse;
 import com.auction.bid.exception.AuctionAlreadyEndedException;
 import com.auction.bid.exception.AuctionNotActiveException;
 import com.auction.bid.exception.BidAmountTooLowException;
-import com.auction.bid.exception.BidException;
 import com.auction.bid.exception.BidNotFoundException;
 import com.auction.bid.exception.InvalidRequestException;
 import com.auction.bid.exception.SellerCannotBidException;
 import com.auction.bid.exception.UpstreamErrorException;
 import com.auction.bid.exception.UpstreamUnavailableException;
 import com.auction.bid.repository.BidRepository;
-import feign.FeignException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -146,20 +144,16 @@ public class BidService {
         return WinnerResponse.of(auctionId, bidRepository.save(winner));
     }
 
+    /**
+     * 예외 매핑은 AuctionClientFallbackFactory 한 곳에서 끝난다(404/502는 그대로, 연결 실패·타임아웃·5xx·서킷 OPEN은 503).
+     * 여기서 FeignException을 다시 잡으면 매핑이 두 군데로 갈라지므로 두지 않는다.
+     * 경매 상태 없이 입찰을 받는 대체 경로는 없다 — 조회가 실패하면 입찰도 실패한다.
+     */
     private AuctionSummaryResponse fetchAuction(Long auctionId) {
-        try {
-            AuctionSummaryResponse auction = auctionClient.getAuction(auctionId);
-            if (auction == null) {
-                throw new UpstreamUnavailableException("auction-service 응답이 비어 있습니다. auctionId=" + auctionId);
-            }
-            return auction;
-        } catch (BidException e) {
-            // ErrorDecoder가 이미 변환한 예외(404/5xx/4xx)는 그대로 전달
-            throw e;
-        } catch (FeignException e) {
-            // 연결 거부·타임아웃(RetryableException 포함)은 ErrorDecoder를 거치지 않으므로 여기서 503으로 변환
-            throw new UpstreamUnavailableException(
-                    "auction-service에 연결할 수 없습니다. auctionId=" + auctionId, e);
+        AuctionSummaryResponse auction = auctionClient.getAuction(auctionId);
+        if (auction == null) {
+            throw new UpstreamUnavailableException("auction-service 응답이 비어 있습니다. auctionId=" + auctionId);
         }
+        return auction;
     }
 }

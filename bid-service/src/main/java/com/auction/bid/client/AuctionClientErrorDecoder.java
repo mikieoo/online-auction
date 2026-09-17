@@ -9,7 +9,7 @@ import feign.codec.ErrorDecoder;
 /**
  * auction-service HTTP 오류 응답을 bid-service 예외로 변환한다.
  * 404 → AUCTION_NOT_FOUND(404), 5xx → UPSTREAM_UNAVAILABLE(503), 그 외 4xx → UPSTREAM_ERROR(502).
- * 연결 실패·타임아웃은 이 디코더를 거치지 않고 feign.RetryableException으로 올라오므로 BidService에서 처리한다.
+ * 연결 실패·타임아웃은 이 디코더를 거치지 않고 feign.RetryableException으로 올라오므로 AuctionClientFallbackFactory에서 503으로 바꾼다.
  */
 public class AuctionClientErrorDecoder implements ErrorDecoder {
 
