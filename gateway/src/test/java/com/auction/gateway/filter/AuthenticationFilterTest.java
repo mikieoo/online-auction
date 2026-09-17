@@ -128,6 +128,28 @@ class AuthenticationFilterTest {
     }
 
     @Test
+    void 경로_우회_변형은_토큰이_유효해도_404로_끊고_체인을_호출하지_않는다() {
+        String token = tokenService.issue(7L);
+        for (String path : new String[] {
+                "/api/v1/bids/../../../internal/v1/payments",
+                "/api/v1/bids/%2e%2e/%2e%2e/internal/v1/payments",
+                "/api/v1/bids/..;/internal/v1/payments",
+                "/api/v1/payments;x=1/1",
+                "/api/v1/%70ayments/1",
+                "/api/v1//bids"}) {
+            MockServerWebExchange exchange = MockServerWebExchange.from(
+                    MockServerHttpRequest.method(org.springframework.http.HttpMethod.POST, java.net.URI.create("http://localhost" + path))
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token));
+            CapturingChain localChain = new CapturingChain();
+
+            filter.filter(exchange, localChain).block();
+
+            assertThat(exchange.getResponse().getStatusCode()).as(path).isEqualTo(HttpStatus.NOT_FOUND);
+            assertThat(localChain.forwarded).as(path).isNull();
+        }
+    }
+
+    @Test
     void 라우팅_필터보다_먼저_실행된다() {
         assertThat(filter.getOrder()).isLessThan(0);
     }

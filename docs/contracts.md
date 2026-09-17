@@ -16,6 +16,8 @@
 | HTTP | 의미 | code |
 |---|---|---|
 | 400 | 값 검증 실패(필수 누락, 형식, 음수), 헤더 누락, 본문 파싱 실패 | `INVALID_REQUEST` |
+| 4xx | (Gateway) Gateway 자체 엔드포인트의 그 밖의 4xx(405, 415 등)는 상태 코드를 유지하고 code만 `INVALID_REQUEST` | `INVALID_REQUEST` |
+| 404 | (Gateway) 경로에 `%`, `;`, `\`, `..`, `//`가 포함됨 — 토큰과 무관하게 거절 | `NOT_FOUND` |
 | 401 | (Gateway) 토큰 없음·형식 오류·서명 불일치·sub 형식 오류 | `UNAUTHORIZED` |
 | 401 | (Gateway) 토큰 만료 — 다시 발급받아야 한다 | `TOKEN_EXPIRED` |
 | 400 | 입찰 금액 규칙 위반 | `BID_AMOUNT_TOO_LOW` |
