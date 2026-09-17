@@ -6,3 +6,74 @@ spring:
     name: gateway
   main:
     web-application-type: reactive
+  cloud:
+    gateway:
+      # 경로는 바꾸지 않고 그대로 전달한다. /internal/** 과 그 밖의 경로는 라우트가 없어 404 NOT_FOUND가 된다.
+      # 서킷 브레이커 이름 = 대상 서비스 이름(서비스당 하나). statusCodes는 설정하지 않는다 —
+      # 하류가 돌려준 4xx/5xx는 실패로 세지 않고 그대로 통과시킨다. 실패로 세는 것은 연결 실패와 타임아웃뿐이다.
+      routes:
+        - id: auction-service
+          uri: lb://auction-service
+          predicates:
+            - Path=/api/v1/products/**,/api/v1/auctions/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: auction-service
+                fallbackUri: forward:/fallback/auction-service
+        - id: bid-service
+          uri: lb://bid-service
+          predicates:
+            - Path=/api/v1/bids/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: bid-service
+                fallbackUri: forward:/fallback/bid-service
+        - id: payment-service
+          uri: lb://payment-service
+          predicates:
+            - Path=/api/v1/payments/**
+          filters:
+            - name: CircuitBreaker
+              args:
+                name: payment-service
+                fallbackUri: forward:/fallback/payment-service
+
+gateway:
+  jwt:
+    # 기본값을 두지 않는다. JWT_SECRET이 없거나 32바이트 미만이면 기동에 실패한다.
+    secret: ${JWT_SECRET:}
+    ttl: PT1H
+
+# Spring Cloud CircuitBreaker는 이름별 설정(configs.<이름>)이 없으면 레지스트리의 default 설정을 쓴다.
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+  timelimiter:
+    configs:
+      default:
+        # 기본 1초는 너무 짧다: 입찰 요청은 bid-service 안에서 auction-service를 최대 약 7초 기다린다.
+        timeout-duration: 8s
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka
+    registry-fetch-interval-seconds: 5
+  instance:
+    prefer-ip-address: true
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 15
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,circuitbreakers,circuitbreakerevents
