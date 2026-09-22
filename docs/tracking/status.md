@@ -55,9 +55,24 @@
 - gRPC 버전 이슈: `grpc-spring-boot-starter:3.1.0.RELEASE`가 내부적으로 `grpc-core:1.63.0`을 사용하므로 명시 의존성도 1.63.0으로 통일(`ClassNotFoundException: io.grpc.InternalGlobalInterceptors` 해결).
 - 검증 상태: 단위 테스트 200개(auction 71, bid 64 (+3), payment 37, gateway 28) 통과. `./gradlew clean build` 통과. 실기동 테스트(Eureka + 4서비스 + Gateway): Happy Path(토큰→상품→경매→입찰→만료→gRPC 낙찰 확정→COMPLETED) 확인. CB 장애 복구(bid-service kill → gRPC UNAVAILABLE 3회 → CB OPEN → auction CLOSED/winnerId=null 유지 → bid-service 재시작 → CB HALF_OPEN → 정산 성공 → COMPLETED) 확인.
 
+## 완료 (D6)
+
+- 낙관적 락(Optimistic Locking)으로 동시 입찰 직렬화.
+  - Bid 엔티티에 `@Version` 추가. DB 스키마에 `version BIGINT NOT NULL DEFAULT 0` 컬럼 추가.
+  - 동시에 같은 ACTIVE bid를 OUTBID로 전이하려 하면 `ObjectOptimisticLockingFailureException` 발생 → `GlobalExceptionHandler`가 409 `BID_CONFLICT`로 변환.
+  - `BidConflictException` 예외 클래스 추가 (향후 서비스 레벨 재시도에 활용 가능).
+  - k6 부하 테스트 스크립트 작성 (`infra/k6/concurrent-bid-test.js`).
+- 검증 상태: 단위 테스트 201개(auction 71, bid 65 (+1), payment 37, gateway 28) 통과. `./gradlew clean build` 통과. 실기동 동시 입찰 테스트: 10개 동시 입찰 중 1개만 성공, 9개 BID_CONFLICT(409) 거절. DB에 ACTIVE bid 정확히 1개 유지. 재시도(순차) 정상 동작 확인.
+
+### D6의 한계 (D7에서 해결)
+
+- 낙관적 락은 충돌 시 실패+재시도 모델. 동시 요청이 많으면 재시도 비율이 높다.
+- "조회 → 검증 → 쓰기" 전체를 직렬화하지 않아, 검증 단계의 읽기 경합은 여전히 존재.
+- D7에서 auctionId 기준 분산 락(Redisson)으로 전체 직렬화 예정.
+
 ## 남은 범위
 
-- **D6~D7:** 동시성 제어 (낙관적 락 → 분산 락 비교), CI 파이프라인, Terraform 시작
+- **D7:** 분산 락(Redisson)으로 동시성 제어 강화, CI 파이프라인, Terraform 시작
 - **D8~D13:** Kafka, Saga(낙찰→결제 이벤트화, 차순위 승계), Outbox, 멱등 컨슈머, Retry/DLQ
 - **D14~D21:** CQRS, Event Sourcing(선택), K8s 배포, Terraform 심화
 - **D22~D30:** 관측성, CD 완성, 부하 테스트, 문서화

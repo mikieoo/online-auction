@@ -9,13 +9,17 @@ import com.auction.bid.dto.WinnerResponse;
 import com.auction.bid.exception.AuctionAlreadyEndedException;
 import com.auction.bid.exception.AuctionNotActiveException;
 import com.auction.bid.exception.BidAmountTooLowException;
+import com.auction.bid.exception.BidConflictException;
 import com.auction.bid.exception.BidNotFoundException;
 import com.auction.bid.exception.InvalidRequestException;
 import com.auction.bid.exception.SellerCannotBidException;
 import com.auction.bid.exception.UpstreamErrorException;
 import com.auction.bid.exception.UpstreamUnavailableException;
 import com.auction.bid.repository.BidRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,6 +32,7 @@ import java.util.Optional;
 @Service
 public class BidService {
 
+    private static final Logger log = LoggerFactory.getLogger(BidService.class);
     private static final String AUCTION_STATUS_ACTIVE = "ACTIVE";
 
     private final BidRepository bidRepository;
@@ -49,12 +54,10 @@ public class BidService {
      * 입찰 접수. 검사 순서: 금액 형식 → 경매 조회 → 판매자 본인 → 경매 상태/마감 → 금액 규칙 → 저장.
      * 첫 실패에서 즉시 거절한다.
      *
-     * 동시성: 같은 경매에 대한 동시 입찰은 D7에서 auctionId 기준 분산 락(Redisson)으로 직렬화할 예정.
-     * D3에서는 락 없이 동작하므로 동시 요청 시 ACTIVE Bid 유일성이 깨질 수 있음을 알고 있다.
-     *
-     * 트랜잭션 경계: auction-service 조회(Feign)가 이 트랜잭션 안에서 일어난다. 요청 1건당 조회 1회이고 쓰기 전 검증에
-     * 필요한 값이라 의도적으로 한 트랜잭션에 두었다(정산 스케줄러처럼 다건을 순회하는 경로와 다르다). D7에서 분산 락을
-     * 도입할 때 락 획득 → 조회 → 트랜잭션 쓰기 순서로 재구성한다.
+     * 동시성: 이전 ACTIVE Bid를 OUTBID로 전이할 때 {@code @Version} 낙관적 락이 충돌을 감지한다.
+     * 두 스레드가 같은 Bid를 동시에 OUTBID로 바꾸려 하면 한쪽은 {@code ObjectOptimisticLockingFailureException}으로
+     * 실패하고, GlobalExceptionHandler가 409 BID_CONFLICT로 변환한다.
+     * D7에서 auctionId 기준 분산 락(Redisson)으로 직렬화를 강화할 예정.
      */
     @Transactional
     public Bid placeBid(Long bidderId, PlaceBidRequest request) {
