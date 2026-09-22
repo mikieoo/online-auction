@@ -54,10 +54,8 @@ public class BidService {
      * 입찰 접수. 검사 순서: 금액 형식 → 경매 조회 → 판매자 본인 → 경매 상태/마감 → 금액 규칙 → 저장.
      * 첫 실패에서 즉시 거절한다.
      *
-     * 동시성: 이전 ACTIVE Bid를 OUTBID로 전이할 때 {@code @Version} 낙관적 락이 충돌을 감지한다.
-     * 두 스레드가 같은 Bid를 동시에 OUTBID로 바꾸려 하면 한쪽은 {@code ObjectOptimisticLockingFailureException}으로
-     * 실패하고, GlobalExceptionHandler가 409 BID_CONFLICT로 변환한다.
-     * D7에서 auctionId 기준 분산 락(Redisson)으로 직렬화를 강화할 예정.
+     * 동시성: {@link BidLockFacade}가 auctionId 기준 분산 락(Redisson)으로 이 메서드 호출을 직렬화한다.
+     * {@code @Version} 낙관적 락은 Redis 장애 시 안전망으로 유지한다.
      */
     @Transactional
     public Bid placeBid(Long bidderId, PlaceBidRequest request) {

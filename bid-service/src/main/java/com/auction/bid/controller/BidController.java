@@ -2,6 +2,7 @@ package com.auction.bid.controller;
 
 import com.auction.bid.dto.BidResponse;
 import com.auction.bid.dto.PlaceBidRequest;
+import com.auction.bid.service.BidLockFacade;
 import com.auction.bid.service.BidService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -14,9 +15,11 @@ import java.util.List;
 @RequestMapping("/api/v1/bids")
 public class BidController {
 
+    private final BidLockFacade bidLockFacade;
     private final BidService bidService;
 
-    public BidController(BidService bidService) {
+    public BidController(BidLockFacade bidLockFacade, BidService bidService) {
+        this.bidLockFacade = bidLockFacade;
         this.bidService = bidService;
     }
 
@@ -24,7 +27,7 @@ public class BidController {
     public ResponseEntity<BidResponse> placeBid(
             @RequestHeader("X-User-Id") Long bidderId,
             @Valid @RequestBody PlaceBidRequest request) {
-        var bid = bidService.placeBid(bidderId, request);
+        var bid = bidLockFacade.placeBidWithLock(bidderId, request);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(BidResponse.from(bid));
     }
