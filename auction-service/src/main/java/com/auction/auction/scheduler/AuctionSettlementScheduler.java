@@ -1,6 +1,6 @@
 package com.auction.auction.scheduler;
 
-import com.auction.auction.client.BidClient;
+import com.auction.auction.client.BidGrpcClient;
 import com.auction.auction.client.PaymentClient;
 import com.auction.auction.client.PaymentRequest;
 import com.auction.auction.client.PaymentResponse;
@@ -10,6 +10,7 @@ import com.auction.auction.dto.SettlementTarget;
 import com.auction.auction.service.AuctionSettlementService;
 import feign.FeignException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.grpc.StatusRuntimeException;
 import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,9 +24,9 @@ import java.util.function.Supplier;
 /**
  * 마감(A단계)·정산(B단계) 주기 실행기. 이 빈은 트랜잭션을 열지 않는다.
  * DB 작업은 경매 1건 = 트랜잭션 1개로 {@link AuctionSettlementService}에 위임하고,
- * bid/payment Feign 호출은 그 트랜잭션들 사이(트랜잭션 밖)에서 수행한다.
+ * bid(gRPC)/payment(Feign) 호출은 그 트랜잭션들 사이(트랜잭션 밖)에서 수행한다.
  * 한 경매의 예외는 WARN 로그 후 다음 경매로 넘어가며, A단계는 B단계 결과와 무관하게 항상 먼저 완료된다.
- * 클라이언트 호출에서 나온 예외는 종류와 무관하게(FeignException, NoFallbackAvailableException,
+ * 클라이언트 호출에서 나온 예외는 종류와 무관하게(StatusRuntimeException, FeignException,
  * CallNotPermittedException, 그 래퍼) "저장 없이 다음 주기 재시도"이고,
  * 서킷 브레이커가 OPEN이면 이번 틱의 남은 정산 대상을 건너뛴다.
  * ShedLock으로 다중 인스턴스에서 한 번에 하나만 실행된다.
@@ -39,16 +40,16 @@ public class AuctionSettlementScheduler {
     private static final String PAYMENT_SERVICE = "payment-service";
 
     private final AuctionSettlementService settlementService;
-    private final BidClient bidClient;
+    private final BidGrpcClient bidGrpcClient;
     private final PaymentClient paymentClient;
     private final int settlementBatchSize;
 
     public AuctionSettlementScheduler(AuctionSettlementService settlementService,
-                                      BidClient bidClient,
+                                      BidGrpcClient bidGrpcClient,
                                       PaymentClient paymentClient,
                                       @Value("${scheduler.auction.settlement-batch-size:50}") int settlementBatchSize) {
         this.settlementService = settlementService;
-        this.bidClient = bidClient;
+        this.bidGrpcClient = bidGrpcClient;
         this.paymentClient = paymentClient;
         this.settlementBatchSize = settlementBatchSize;
     }
@@ -82,19 +83,13 @@ public class AuctionSettlementScheduler {
                 settleOne(target);
             } catch (ExternalCallFailedException e) {
                 if (findCause(e, CallNotPermittedException.class) != null) {
-                    // 브레이커 OPEN이면 이번 틱의 남은 대상을 시도하지 않는다. 재시도는 스케줄러 주기가 담당하므로
-                    // OPEN 상태에서 남은 49건을 더 두드려 봐야 즉시 거절 로그만 쌓인다. 일찍 끝내면 최악 틱 시간도 줄어
-                    // ShedLock lockAtMostFor(30s)를 넘길 위험이 낮아진다. A단계(마감)는 이미 끝난 뒤라 영향이 없다.
-                    // 스택 트레이스는 남기지 않는다 — OPEN은 예상된 상태이고, 원인은 브레이커를 연 앞선 실패 로그에 있다.
                     log.warn("정산 중 외부 서비스 호출 실패(서킷 브레이커 OPEN), 이번 틱의 남은 정산을 중단하고 "
                                     + "다음 주기에 재시도합니다. client={}, auctionId={}, 미처리={}건",
                             e.getClientName(), target.getAuctionId(), targets.size() - i);
                     return;
                 }
-                FeignException feign = findCause(e, FeignException.class);
                 log.warn("정산 중 외부 서비스 호출 실패, 다음 주기에 재시도합니다. client={}, auctionId={}, status={}",
-                        e.getClientName(), target.getAuctionId(),
-                        feign != null ? String.valueOf(feign.status()) : "N/A", e.getCause());
+                        e.getClientName(), target.getAuctionId(), extractStatusInfo(e), e.getCause());
             } catch (RuntimeException e) {
                 log.warn("정산 처리 실패, 다음 경매로 넘어갑니다. auctionId={}", target.getAuctionId(), e);
             }
@@ -104,8 +99,8 @@ public class AuctionSettlementScheduler {
     private void settleOne(SettlementTarget target) {
         Long auctionId = target.getAuctionId();
 
-        // 1. 낙찰 확정 (Feign, 트랜잭션 밖). 실패 시 ExternalCallFailedException → 저장 없이 다음 주기.
-        WinnerResponse winner = callExternal(BID_SERVICE, () -> bidClient.confirmWinner(auctionId));
+        // 1. 낙찰 확정 (gRPC, 트랜잭션 밖). 실패 시 ExternalCallFailedException → 저장 없이 다음 주기.
+        WinnerResponse winner = callExternal(BID_SERVICE, () -> bidGrpcClient.confirmWinner(auctionId));
 
         if (!winner.isHasBids()) {
             settlementService.markNoBids(auctionId);
@@ -148,8 +143,8 @@ public class AuctionSettlementScheduler {
 
     /**
      * 클라이언트 호출에서 나온 예외를 저장 단계(AuctionSettlementService) 예외와 구분하기 위한 경계.
-     * 서킷 브레이커를 켜면 같은 장애가 FeignException 대신 NoFallbackAvailableException(원인에 FeignException)이나
-     * CallNotPermittedException으로 올라오므로, 타입을 나열하지 않고 "클라이언트 호출에서 나왔다"는 사실로 분류한다.
+     * bid-service는 gRPC(StatusRuntimeException), payment-service는 Feign(FeignException)이므로
+     * 타입을 나열하지 않고 "클라이언트 호출에서 나왔다"는 사실로 분류한다.
      */
     private static <T> T callExternal(String clientName, Supplier<T> call) {
         try {
@@ -157,6 +152,19 @@ public class AuctionSettlementScheduler {
         } catch (RuntimeException e) {
             throw new ExternalCallFailedException(clientName, e);
         }
+    }
+
+    /** 원인 사슬에서 gRPC/Feign 상태 정보를 추출한다. 로깅 전용. */
+    private static String extractStatusInfo(ExternalCallFailedException e) {
+        StatusRuntimeException grpc = findCause(e, StatusRuntimeException.class);
+        if (grpc != null) {
+            return grpc.getStatus().getCode().name();
+        }
+        FeignException feign = findCause(e, FeignException.class);
+        if (feign != null) {
+            return String.valueOf(feign.status());
+        }
+        return "N/A";
     }
 
     /** 원인 사슬에서 지정 타입을 찾는다. 순환 사슬에서 무한 루프를 돌지 않도록 깊이를 제한한다. */

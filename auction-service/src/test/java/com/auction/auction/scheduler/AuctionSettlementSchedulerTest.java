@@ -1,6 +1,6 @@
 package com.auction.auction.scheduler;
 
-import com.auction.auction.client.BidClient;
+import com.auction.auction.client.BidGrpcClient;
 import com.auction.auction.client.PaymentClient;
 import com.auction.auction.client.PaymentRequest;
 import com.auction.auction.client.PaymentResponse;
@@ -10,9 +10,10 @@ import com.auction.auction.client.WinningBidResponse;
 import com.auction.auction.dto.SettlementTarget;
 import com.auction.auction.service.AuctionSettlementService;
 import feign.FeignException;
-import feign.RetryableException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -22,7 +23,6 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.cloud.client.circuitbreaker.NoFallbackAvailableException;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -35,7 +35,6 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -54,7 +53,7 @@ class AuctionSettlementSchedulerTest {
     private AuctionSettlementService settlementService;
 
     @Mock
-    private BidClient bidClient;
+    private BidGrpcClient bidGrpcClient;
 
     @Mock
     private PaymentClient paymentClient;
@@ -63,7 +62,7 @@ class AuctionSettlementSchedulerTest {
 
     @BeforeEach
     void setUp() {
-        scheduler = new AuctionSettlementScheduler(settlementService, bidClient, paymentClient, BATCH_SIZE);
+        scheduler = new AuctionSettlementScheduler(settlementService, bidGrpcClient, paymentClient, BATCH_SIZE);
     }
 
     private static WinnerResponse winner(Long auctionId, Long bidderId, BigDecimal amount) {
@@ -101,7 +100,7 @@ class AuctionSettlementSchedulerTest {
 
             verify(settlementService).closeAuction(AUCTION_ID);
             verify(settlementService).closeAuction(OTHER_AUCTION_ID);
-            verifyNoInteractions(bidClient, paymentClient);
+            verifyNoInteractions(bidGrpcClient, paymentClient);
         }
 
         @Test
@@ -121,13 +120,14 @@ class AuctionSettlementSchedulerTest {
         void closeStepRunsBeforeAndIndependentlyOfSettlement() {
             when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of(AUCTION_ID));
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(OTHER_AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(OTHER_AUCTION_ID)).thenThrow(mock(RetryableException.class));
+            when(bidGrpcClient.confirmWinner(OTHER_AUCTION_ID))
+                    .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
 
             scheduler.settle();
 
-            InOrder inOrder = inOrder(settlementService, bidClient);
+            InOrder inOrder = inOrder(settlementService, bidGrpcClient);
             inOrder.verify(settlementService).closeAuction(AUCTION_ID);
-            inOrder.verify(bidClient).confirmWinner(OTHER_AUCTION_ID);
+            inOrder.verify(bidGrpcClient).confirmWinner(OTHER_AUCTION_ID);
         }
     }
 
@@ -146,7 +146,7 @@ class AuctionSettlementSchedulerTest {
         @DisplayName("hasBids=false → markNoBids(유찰 FAILED), 결제 호출 없음")
         void noBidsMarksFailed() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(noBids(AUCTION_ID));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(noBids(AUCTION_ID));
 
             scheduler.settle();
 
@@ -160,7 +160,7 @@ class AuctionSettlementSchedulerTest {
         @DisplayName("결제 COMPLETED → completeWithWinner(winner + COMPLETED)")
         void paymentCompletedCompletesAuction() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
             when(paymentClient.requestPayment(any(PaymentRequest.class)))
                     .thenReturn(payment(AUCTION_ID, PaymentStatus.COMPLETED));
 
@@ -175,7 +175,7 @@ class AuctionSettlementSchedulerTest {
         @DisplayName("결제 FAILED → recordPaymentFailed(winner 저장, CLOSED 유지)")
         void paymentFailedRecordsWinnerOnly() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
             when(paymentClient.requestPayment(any(PaymentRequest.class)))
                     .thenReturn(payment(AUCTION_ID, PaymentStatus.FAILED));
 
@@ -190,7 +190,7 @@ class AuctionSettlementSchedulerTest {
         @DisplayName("결제 REQUESTED → 저장하지 않고 다음 주기에 재시도")
         void paymentRequestedSavesNothing() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
             when(paymentClient.requestPayment(any(PaymentRequest.class)))
                     .thenReturn(payment(AUCTION_ID, PaymentStatus.REQUESTED));
 
@@ -200,10 +200,11 @@ class AuctionSettlementSchedulerTest {
         }
 
         @Test
-        @DisplayName("bid-service 호출 실패(FeignException) → 저장 없음, 결제 호출 없음")
+        @DisplayName("bid-service gRPC 호출 실패(UNAVAILABLE) → 저장 없음, 결제 호출 없음")
         void bidClientFailureSavesNothing() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(mock(FeignException.class));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID))
+                    .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
 
             scheduler.settle();
 
@@ -212,10 +213,11 @@ class AuctionSettlementSchedulerTest {
         }
 
         @Test
-        @DisplayName("bid-service 연결 실패·타임아웃(RetryableException) → 저장 없음")
+        @DisplayName("bid-service gRPC 데드라인 초과(DEADLINE_EXCEEDED) → 저장 없음")
         void bidClientTimeoutSavesNothing() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(mock(RetryableException.class));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID))
+                    .thenThrow(new StatusRuntimeException(Status.DEADLINE_EXCEEDED));
 
             scheduler.settle();
 
@@ -227,8 +229,13 @@ class AuctionSettlementSchedulerTest {
         @DisplayName("payment-service 호출 실패(FeignException) → 저장 없음")
         void paymentClientFailureSavesNothing() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
-            when(paymentClient.requestPayment(any(PaymentRequest.class))).thenThrow(mock(FeignException.class));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
+            when(paymentClient.requestPayment(any(PaymentRequest.class)))
+                    .thenThrow(FeignException.errorStatus("PaymentClient#requestPayment",
+                            feign.Response.builder().status(500).request(
+                                    feign.Request.create(feign.Request.HttpMethod.POST, "http://payment",
+                                            java.util.Collections.emptyMap(), null, null, null))
+                                    .build()));
 
             scheduler.settle();
 
@@ -240,8 +247,8 @@ class AuctionSettlementSchedulerTest {
         void exceptionInFirstAuctionDoesNotBlockSecond() {
             when(settlementService.findSettlementTargets(BATCH_SIZE))
                     .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(new RuntimeException("예상치 못한 오류"));
-            when(bidClient.confirmWinner(OTHER_AUCTION_ID)).thenReturn(noBids(OTHER_AUCTION_ID));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenThrow(new RuntimeException("예상치 못한 오류"));
+            when(bidGrpcClient.confirmWinner(OTHER_AUCTION_ID)).thenReturn(noBids(OTHER_AUCTION_ID));
 
             scheduler.settle();
 
@@ -254,9 +261,9 @@ class AuctionSettlementSchedulerTest {
         void persistenceExceptionDoesNotBlockNext() {
             when(settlementService.findSettlementTargets(BATCH_SIZE))
                     .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(noBids(AUCTION_ID));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(noBids(AUCTION_ID));
             doThrow(new IllegalStateException("경매를 실패 처리할 수 없습니다.")).when(settlementService).markNoBids(AUCTION_ID);
-            when(bidClient.confirmWinner(OTHER_AUCTION_ID)).thenReturn(noBids(OTHER_AUCTION_ID));
+            when(bidGrpcClient.confirmWinner(OTHER_AUCTION_ID)).thenReturn(noBids(OTHER_AUCTION_ID));
 
             scheduler.settle();
 
@@ -267,7 +274,7 @@ class AuctionSettlementSchedulerTest {
         @DisplayName("결제 요청 body: auctionId, payerId=낙찰자, amount=낙찰가, idempotencyKey={auctionId}-{winnerId}-{reassignmentCount}")
         void paymentRequestCarriesIdempotencyKey() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 2)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
             when(paymentClient.requestPayment(any(PaymentRequest.class)))
                     .thenReturn(payment(AUCTION_ID, PaymentStatus.COMPLETED));
 
@@ -286,7 +293,7 @@ class AuctionSettlementSchedulerTest {
         @DisplayName("hasBids=true인데 winningBid가 null이면 저장하지 않는다")
         void inconsistentWinnerResponseSavesNothing() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(new WinnerResponse(AUCTION_ID, true, null));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(new WinnerResponse(AUCTION_ID, true, null));
 
             scheduler.settle();
 
@@ -322,18 +329,15 @@ class AuctionSettlementSchedulerTest {
             return CallNotPermittedException.createCallNotPermittedException(CircuitBreaker.ofDefaults("bid-service"));
         }
 
-        private NoFallbackAvailableException noFallback(Throwable cause) {
-            return new NoFallbackAvailableException("No fallback available.", cause);
-        }
-
         @Test
-        @DisplayName("bid 클라이언트가 NoFallbackAvailableException(원인 FeignException) → 저장 없음, 다음 경매는 계속 처리")
-        void bidNoFallbackWrappingFeignSavesNothingAndContinues() {
+        @DisplayName("bid gRPC 클라이언트가 StatusRuntimeException(UNAVAILABLE) → 저장 없음, 다음 경매는 계속 처리")
+        void bidGrpcUnavailableSavesNothingAndContinues() {
             when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of());
             when(settlementService.findSettlementTargets(BATCH_SIZE))
                     .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(noFallback(mock(FeignException.class)));
-            when(bidClient.confirmWinner(OTHER_AUCTION_ID)).thenReturn(noBids(OTHER_AUCTION_ID));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID))
+                    .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+            when(bidGrpcClient.confirmWinner(OTHER_AUCTION_ID)).thenReturn(noBids(OTHER_AUCTION_ID));
 
             scheduler.settle();
 
@@ -345,15 +349,19 @@ class AuctionSettlementSchedulerTest {
         }
 
         @Test
-        @DisplayName("payment 클라이언트가 NoFallbackAvailableException(원인 FeignException) → 저장 없음, 다음 경매는 계속 처리")
-        void paymentNoFallbackWrappingFeignSavesNothingAndContinues() {
+        @DisplayName("payment 클라이언트가 FeignException → 저장 없음, 다음 경매는 계속 처리")
+        void paymentFeignExceptionSavesNothingAndContinues() {
             when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of());
             when(settlementService.findSettlementTargets(BATCH_SIZE))
                     .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
             when(paymentClient.requestPayment(any(PaymentRequest.class)))
-                    .thenThrow(noFallback(mock(FeignException.class)));
-            when(bidClient.confirmWinner(OTHER_AUCTION_ID)).thenReturn(noBids(OTHER_AUCTION_ID));
+                    .thenThrow(FeignException.errorStatus("PaymentClient#requestPayment",
+                            feign.Response.builder().status(500).request(
+                                    feign.Request.create(feign.Request.HttpMethod.POST, "http://payment",
+                                            java.util.Collections.emptyMap(), null, null, null))
+                                    .build()));
+            when(bidGrpcClient.confirmWinner(OTHER_AUCTION_ID)).thenReturn(noBids(OTHER_AUCTION_ID));
 
             scheduler.settle();
 
@@ -368,29 +376,30 @@ class AuctionSettlementSchedulerTest {
             when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of());
             when(settlementService.findSettlementTargets(BATCH_SIZE))
                     .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0), target(3L, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(breakerOpen());
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenThrow(breakerOpen());
 
             scheduler.settle();
 
-            verify(bidClient).confirmWinner(AUCTION_ID);
-            verify(bidClient, never()).confirmWinner(OTHER_AUCTION_ID);
-            verify(bidClient, never()).confirmWinner(3L);
+            verify(bidGrpcClient).confirmWinner(AUCTION_ID);
+            verify(bidGrpcClient, never()).confirmWinner(OTHER_AUCTION_ID);
+            verify(bidGrpcClient, never()).confirmWinner(3L);
             verifyNoInteractions(paymentClient);
             verifyNoSettlementWrites();
         }
 
         @Test
-        @DisplayName("NoFallbackAvailableException에 싸인 CallNotPermittedException도 OPEN으로 판정해 남은 대상을 건너뛴다")
+        @DisplayName("RuntimeException에 싸인 CallNotPermittedException도 OPEN으로 판정해 남은 대상을 건너뛴다")
         void wrappedBreakerOpenStopsRemainingTargets() {
             when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of());
             when(settlementService.findSettlementTargets(BATCH_SIZE))
                     .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(noFallback(breakerOpen()));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID))
+                    .thenThrow(new RuntimeException("wrapper", breakerOpen()));
 
             scheduler.settle();
 
-            verify(bidClient).confirmWinner(AUCTION_ID);
-            verify(bidClient, never()).confirmWinner(OTHER_AUCTION_ID);
+            verify(bidGrpcClient).confirmWinner(AUCTION_ID);
+            verify(bidGrpcClient, never()).confirmWinner(OTHER_AUCTION_ID);
             verifyNoInteractions(paymentClient);
             verifyNoSettlementWrites();
         }
@@ -401,12 +410,12 @@ class AuctionSettlementSchedulerTest {
             when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of());
             when(settlementService.findSettlementTargets(BATCH_SIZE))
                     .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
             when(paymentClient.requestPayment(any(PaymentRequest.class))).thenThrow(breakerOpen());
 
             scheduler.settle();
 
-            verify(bidClient, never()).confirmWinner(OTHER_AUCTION_ID);
+            verify(bidGrpcClient, never()).confirmWinner(OTHER_AUCTION_ID);
             verifyNoSettlementWrites();
         }
 
@@ -416,15 +425,15 @@ class AuctionSettlementSchedulerTest {
             when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of(10L, 11L));
             when(settlementService.findSettlementTargets(BATCH_SIZE))
                     .thenReturn(List.of(target(AUCTION_ID, 0), target(OTHER_AUCTION_ID, 0)));
-            when(bidClient.confirmWinner(AUCTION_ID)).thenThrow(breakerOpen());
+            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenThrow(breakerOpen());
 
             scheduler.settle();
 
-            InOrder inOrder = inOrder(settlementService, bidClient);
+            InOrder inOrder = inOrder(settlementService, bidGrpcClient);
             inOrder.verify(settlementService).closeAuction(10L);
             inOrder.verify(settlementService).closeAuction(11L);
-            inOrder.verify(bidClient).confirmWinner(AUCTION_ID);
-            verify(bidClient, never()).confirmWinner(OTHER_AUCTION_ID);
+            inOrder.verify(bidGrpcClient).confirmWinner(AUCTION_ID);
+            verify(bidGrpcClient, never()).confirmWinner(OTHER_AUCTION_ID);
             verifyNoSettlementWrites();
         }
 

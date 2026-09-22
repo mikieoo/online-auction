@@ -13,7 +13,7 @@
 - **Gateway** → 모든 서비스: 단일 공개 진입점. JWT 검증 후 `X-User-Id` 주입(클라이언트가 보낸 값은 제거). `/api/**`만 라우팅하고 `/internal/**`는 라우트가 없다. 대상은 `lb://{서비스 이름}` — Eureka에서 인스턴스를 찾아 부하 분산. 라우트마다 Circuit Breaker + fallback(503).
 - **discovery-service**: Eureka 서버(로컬 전용). 서비스 이름 → 인스턴스 주소. GKE(D18)에서는 K8s Service DNS가 대신한다.
 - **bid-service** → **auction-service**: 동기 REST(OpenFeign, 서비스 이름으로 조회, Circuit Breaker). 입찰 검증에 필요한 경매 상태·판매자·시작가·마감시간 조회. 호출 불가 시 입찰을 빠르게 503으로 거절한다.
-- **auction-service** → **bid-service**: 동기 REST(OpenFeign + Circuit Breaker, D5부터 gRPC). 낙찰 확정(현재 ACTIVE 입찰을 WINNER로).
+- **auction-service** → **bid-service**: 낙찰 확정(현재 ACTIVE 입찰을 WINNER로). D5에서 gRPC로 전환(BidGrpcClient, blocking stub + Resilience4j CB). 서비스 디스커버리 `discovery:///bid-service`. REST 엔드포인트는 디버깅용으로 유지.
 - **auction-service** → **payment-service**: 현재 동기 REST(OpenFeign + Circuit Breaker)로 결제 요청. D9부터 Kafka `AuctionWon`, `WinnerReassigned` 이벤트로 대체.
 - **auction-service** → **bid-service**: Kafka 비동기(D8~). AuctionStarted, AuctionClosed 이벤트.
 - **payment-service** → **auction-service**: Kafka 비동기(D9~). PaymentCompleted, PaymentFailed 이벤트.

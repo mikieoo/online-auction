@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package auction.grpc;
+
+option java_package = "com.auction.common.grpc";
+option java_multiple_files = true;
+option java_outer_classname = "BidWinnerProto";
+
+/** auction-service -> bid-service: 낙찰 확정 RPC. 기존 REST POST /internal/v1/bids/auctions/{id}/winner 대체. */
+service BidWinnerService {
+  rpc ConfirmWinner (ConfirmWinnerRequest) returns (ConfirmWinnerResponse);
+}
+
+message ConfirmWinnerRequest {
+  int64 auction_id = 1;
+}
+
+message ConfirmWinnerResponse {
+  int64 auction_id = 1;
+  bool has_bids = 2;
+  WinningBid winning_bid = 3;
+}
+
+message WinningBid {
+  int64 bid_id = 1;
+  int64 auction_id = 2;
+  int64 bidder_id = 3;
+  string amount = 4;
+  string status = 5;
+  string created_at = 6;
+}

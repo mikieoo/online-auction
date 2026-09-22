@@ -71,6 +71,10 @@ resilience4j:
           - com.auction.bid.exception.AuctionNotFoundException
           - com.auction.bid.exception.UpstreamErrorException
 
+grpc:
+  server:
+    port: 9082
+
 management:
   endpoints:
     web:
