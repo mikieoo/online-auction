@@ -7,6 +7,7 @@ dependencies {
     implementation 'org.springframework.cloud:spring-cloud-starter-netflix-eureka-client'
     implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-resilience4j'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.redisson:redisson-spring-boot-starter:3.30.0'
     implementation 'net.devh:grpc-server-spring-boot-starter:3.1.0.RELEASE'
     implementation 'io.grpc:grpc-protobuf:1.63.0'
     implementation 'io.grpc:grpc-stub:1.63.0'

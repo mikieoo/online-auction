@@ -70,9 +70,21 @@
 - "조회 → 검증 → 쓰기" 전체를 직렬화하지 않아, 검증 단계의 읽기 경합은 여전히 존재.
 - D7에서 auctionId 기준 분산 락(Redisson)으로 전체 직렬화 예정.
 
+## 완료 (D7)
+
+- 분산 락(Redisson)으로 동시 입찰 직렬화.
+  - `BidLockFacade`: auctionId 기준 Redisson 분산 락으로 `BidService.placeBid()` 호출을 직렬화. 락 획득 대기 3초, 임대 5초. 락이 트랜잭션 바깥에 있어 커밋까지 보호.
+  - `BidController`가 `BidService.placeBid()` 대신 `BidLockFacade.placeBidWithLock()`을 호출하도록 변경.
+  - `@Version` 낙관적 락은 Redis 장애 시 안전망으로 유지.
+  - `redisson-spring-boot-starter:3.30.0` 추가, `spring.data.redis` 설정.
+- 검증 상태: 단위 테스트 205개(auction 71, bid 69 (+4), payment 37, gateway 28) 통과. `./gradlew clean build` 통과. 실기동 동시 입찰 비교:
+  - D6(낙관적 락): 10개 동시 → 1 성공, 9 `BID_CONFLICT`(409, 커밋 시점 version 충돌).
+  - D7(분산 락): 10개 동시 → 1 성공, 9 `BID_AMOUNT_TOO_LOW`(400, 순서대로 최신 가격을 읽고 정상 거절).
+  - 분산 락 덕에 읽기 경합이 사라져, 충돌(409) 대신 정상 업무 거절(400)이 됨.
+
 ## 남은 범위
 
-- **D7:** 분산 락(Redisson)으로 동시성 제어 강화, CI 파이프라인, Terraform 시작
+- **D8~D9:** CI 파이프라인(GitHub Actions), Terraform 시작
 - **D8~D13:** Kafka, Saga(낙찰→결제 이벤트화, 차순위 승계), Outbox, 멱등 컨슈머, Retry/DLQ
 - **D14~D21:** CQRS, Event Sourcing(선택), K8s 배포, Terraform 심화
 - **D22~D30:** 관측성, CD 완성, 부하 테스트, 문서화

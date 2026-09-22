@@ -13,6 +13,7 @@ import com.auction.bid.exception.GlobalExceptionHandler;
 import com.auction.bid.exception.SellerCannotBidException;
 import com.auction.bid.exception.UpstreamErrorException;
 import com.auction.bid.exception.UpstreamUnavailableException;
+import com.auction.bid.service.BidLockFacade;
 import com.auction.bid.service.BidService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -44,6 +45,9 @@ class BidControllerTest {
     private static final String BODY = "{\"auctionId\": 10, \"amount\": 15000}";
 
     @Mock
+    private BidLockFacade bidLockFacade;
+
+    @Mock
     private BidService bidService;
 
     private MockMvc mockMvc;
@@ -51,7 +55,7 @@ class BidControllerTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders
-                .standaloneSetup(new BidController(bidService), new InternalBidController(bidService))
+                .standaloneSetup(new BidController(bidLockFacade, bidService), new InternalBidController(bidService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -65,7 +69,7 @@ class BidControllerTest {
     @Test
     @DisplayName("POST /api/v1/bids → 201 BidResponse")
     void placeBidCreated() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenReturn(bidWithId(1L, 2L, "15000"));
 
         mockMvc.perform(post("/api/v1/bids")
@@ -128,7 +132,7 @@ class BidControllerTest {
     @Test
     @DisplayName("시작가 미만 → 400 BID_AMOUNT_TOO_LOW")
     void bidAmountTooLow() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenThrow(BidAmountTooLowException.belowStartingPrice(
                         new BigDecimal("15000"), new BigDecimal("20000")));
 
@@ -143,7 +147,7 @@ class BidControllerTest {
     @Test
     @DisplayName("판매자 본인 → 403 SELLER_CANNOT_BID")
     void sellerCannotBid() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenThrow(new SellerCannotBidException(10L));
 
         mockMvc.perform(post("/api/v1/bids")
@@ -157,7 +161,7 @@ class BidControllerTest {
     @Test
     @DisplayName("경매 없음 → 404 AUCTION_NOT_FOUND")
     void auctionNotFound() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenThrow(new AuctionNotFoundException(10L));
 
         mockMvc.perform(post("/api/v1/bids")
@@ -171,7 +175,7 @@ class BidControllerTest {
     @Test
     @DisplayName("비ACTIVE 경매 → 409 AUCTION_NOT_ACTIVE")
     void auctionNotActive() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenThrow(new AuctionNotActiveException(10L, "WAITING"));
 
         mockMvc.perform(post("/api/v1/bids")
@@ -185,7 +189,7 @@ class BidControllerTest {
     @Test
     @DisplayName("endTime 경과 → 409 AUCTION_ALREADY_ENDED")
     void auctionAlreadyEnded() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenThrow(new AuctionAlreadyEndedException(10L));
 
         mockMvc.perform(post("/api/v1/bids")
@@ -199,7 +203,7 @@ class BidControllerTest {
     @Test
     @DisplayName("auction-service 연결 실패 → 503 UPSTREAM_UNAVAILABLE")
     void upstreamUnavailable() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenThrow(new UpstreamUnavailableException("연결 실패"));
 
         mockMvc.perform(post("/api/v1/bids")
@@ -213,7 +217,7 @@ class BidControllerTest {
     @Test
     @DisplayName("auction-service 기타 4xx → 502 UPSTREAM_ERROR")
     void upstreamError() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenThrow(new UpstreamErrorException("upstream 400"));
 
         mockMvc.perform(post("/api/v1/bids")
@@ -227,7 +231,7 @@ class BidControllerTest {
     @Test
     @DisplayName("남은 IllegalStateException → 409 INVALID_STATE_TRANSITION")
     void illegalStateMapped() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenThrow(new IllegalStateException("잘못된 상태 전이"));
 
         mockMvc.perform(post("/api/v1/bids")
@@ -241,7 +245,7 @@ class BidControllerTest {
     @Test
     @DisplayName("낙관적 락 충돌 → 409 BID_CONFLICT")
     void optimisticLockConflict() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenThrow(new ObjectOptimisticLockingFailureException(Bid.class.getName(), 1L));
 
         mockMvc.perform(post("/api/v1/bids")
@@ -256,7 +260,7 @@ class BidControllerTest {
     @Test
     @DisplayName("예상치 못한 예외 → 500 INTERNAL_ERROR")
     void unexpectedMapped() throws Exception {
-        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+        when(bidLockFacade.placeBidWithLock(eq(2L), any(PlaceBidRequest.class)))
                 .thenThrow(new RuntimeException("boom"));
 
         mockMvc.perform(post("/api/v1/bids")
