@@ -89,6 +89,12 @@ resilience4j:
       payment-service:
         base-config: default
 
+grpc:
+  client:
+    bid-service:
+      address: 'discovery:///bid-service'
+      negotiation-type: plaintext
+
 management:
   endpoints:
     web:

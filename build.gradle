@@ -37,12 +37,20 @@ configure(subprojects.findAll { it.name != 'common' }) {
     }
 
     dependencies {
-        implementation project(':common')
         implementation 'org.springframework.boot:spring-boot-starter'
         testImplementation 'org.springframework.boot:spring-boot-starter-test'
     }
 
     tasks.named('test') {
         useJUnitPlatform()
+    }
+}
+
+// common은 실제 사용하는 서비스 모듈에만 선언한다.
+// gateway·discovery-service는 common의 클래스를 쓰지 않으며,
+// common의 gRPC 전이 의존성이 gateway 컨텍스트를 깨뜨리는 것도 방지한다.
+configure(subprojects.findAll { it.name in ['auction-service', 'bid-service', 'payment-service'] }) {
+    dependencies {
+        implementation project(':common')
     }
 }
