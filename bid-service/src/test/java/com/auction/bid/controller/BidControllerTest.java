@@ -21,6 +21,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -235,6 +236,21 @@ class BidControllerTest {
                         .content(BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("INVALID_STATE_TRANSITION"));
+    }
+
+    @Test
+    @DisplayName("낙관적 락 충돌 → 409 BID_CONFLICT")
+    void optimisticLockConflict() throws Exception {
+        when(bidService.placeBid(eq(2L), any(PlaceBidRequest.class)))
+                .thenThrow(new ObjectOptimisticLockingFailureException(Bid.class.getName(), 1L));
+
+        mockMvc.perform(post("/api/v1/bids")
+                        .header("X-User-Id", 2L)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BODY))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("BID_CONFLICT"))
+                .andExpect(jsonPath("$.message").exists());
     }
 
     @Test
