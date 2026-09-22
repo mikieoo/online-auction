@@ -45,14 +45,15 @@
 ## 완료 (D5)
 
 - gRPC 전환 (auction-service → bid-service 낙찰 확정 1구간).
-  - common 모듈: protobuf/gRPC 빌드 설정(`com.google.protobuf` 플러그인, `io.grpc` 1.64.0), `bid_winner.proto` 정의(`BidWinnerService.ConfirmWinner` RPC). 생성된 스텁 클래스: `BidWinnerServiceGrpc`, `ConfirmWinnerRequest/Response`, `WinningBid`.
+  - common 모듈: protobuf/gRPC 빌드 설정(`com.google.protobuf` 플러그인, `io.grpc` 1.63.0), `bid_winner.proto` 정의(`BidWinnerService.ConfirmWinner` RPC). 생성된 스텁 클래스: `BidWinnerServiceGrpc`, `ConfirmWinnerRequest/Response`, `WinningBid`.
   - bid-service: `BidWinnerGrpcService`(`@GrpcService`) — `BidService.confirmWinner()` 로직을 gRPC로 노출. `net.devh:grpc-server-spring-boot-starter:3.1.0.RELEASE`. gRPC 포트 9082. REST 엔드포인트(`InternalBidController`)는 디버깅·curl 테스트용으로 유지.
   - auction-service: `BidGrpcClient` — gRPC blocking stub + Resilience4j `CircuitBreaker.decorateSupplier()` 수동 연동. CB 인스턴스 이름 `bid-service` 재사용(기존 yml 설정 그대로 적용). `net.devh:grpc-client-spring-boot-starter:3.1.0.RELEASE`. 서비스 디스커버리 `discovery:///bid-service`. 데드라인은 기존 `read-timeout-ms`(5초) 재사용.
   - `AuctionSettlementScheduler`: `BidClient`(Feign) → `BidGrpcClient` 교체. `extractStatusInfo()`가 `StatusRuntimeException`과 `FeignException` 양쪽 상태를 로깅.
   - Feign `BidClient`·`BidClientConfig`는 제거하지 않음(payment-service Feign과 공유하는 `FeignConfig`·`@EnableFeignClients` 유지). 스케줄러가 더 이상 참조하지 않을 뿐.
   - root `build.gradle`: `implementation project(':common')`을 실제 사용하는 3개 서비스에만 선언(gateway·discovery-service는 common의 gRPC 전이 의존성을 받지 않음).
   - common의 gRPC 의존성을 `implementation`으로 두어 gateway·payment-service에 전이되지 않게 함. auction-service·bid-service는 `io.grpc:grpc-protobuf/stub`을 직접 선언.
-- 검증 상태: 단위 테스트 200개(auction 71, bid 64 (+3), payment 37, gateway 28) 통과. `./gradlew clean build` 통과. 실기동 테스트는 미실시.
+- gRPC 버전 이슈: `grpc-spring-boot-starter:3.1.0.RELEASE`가 내부적으로 `grpc-core:1.63.0`을 사용하므로 명시 의존성도 1.63.0으로 통일(`ClassNotFoundException: io.grpc.InternalGlobalInterceptors` 해결).
+- 검증 상태: 단위 테스트 200개(auction 71, bid 64 (+3), payment 37, gateway 28) 통과. `./gradlew clean build` 통과. 실기동 테스트(Eureka + 4서비스 + Gateway): Happy Path(토큰→상품→경매→입찰→만료→gRPC 낙찰 확정→COMPLETED) 확인. CB 장애 복구(bid-service kill → gRPC UNAVAILABLE 3회 → CB OPEN → auction CLOSED/winnerId=null 유지 → bid-service 재시작 → CB HALF_OPEN → 정산 성공 → COMPLETED) 확인.
 
 ## 남은 범위
 
