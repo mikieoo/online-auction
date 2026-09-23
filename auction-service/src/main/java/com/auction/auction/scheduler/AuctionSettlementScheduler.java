@@ -7,6 +7,7 @@ import com.auction.auction.client.PaymentResponse;
 import com.auction.auction.client.WinnerResponse;
 import com.auction.auction.client.WinningBidResponse;
 import com.auction.auction.dto.SettlementTarget;
+import com.auction.auction.event.AuctionEventProducer;
 import com.auction.auction.service.AuctionSettlementService;
 import feign.FeignException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -42,15 +43,18 @@ public class AuctionSettlementScheduler {
     private final AuctionSettlementService settlementService;
     private final BidGrpcClient bidGrpcClient;
     private final PaymentClient paymentClient;
+    private final AuctionEventProducer eventProducer;
     private final int settlementBatchSize;
 
     public AuctionSettlementScheduler(AuctionSettlementService settlementService,
                                       BidGrpcClient bidGrpcClient,
                                       PaymentClient paymentClient,
+                                      AuctionEventProducer eventProducer,
                                       @Value("${scheduler.auction.settlement-batch-size:50}") int settlementBatchSize) {
         this.settlementService = settlementService;
         this.bidGrpcClient = bidGrpcClient;
         this.paymentClient = paymentClient;
+        this.eventProducer = eventProducer;
         this.settlementBatchSize = settlementBatchSize;
     }
 
@@ -67,6 +71,7 @@ public class AuctionSettlementScheduler {
         for (Long auctionId : auctionIds) {
             try {
                 settlementService.closeAuction(auctionId);
+                eventProducer.publishClosed(auctionId);
                 log.info("경매 마감 처리 완료. auctionId={}", auctionId);
             } catch (RuntimeException e) {
                 log.warn("경매 마감 처리 실패, 다음 경매로 넘어갑니다. auctionId={}", auctionId, e);

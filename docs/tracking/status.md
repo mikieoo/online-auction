@@ -82,10 +82,29 @@
   - D7(분산 락): 10개 동시 → 1 성공, 9 `BID_AMOUNT_TOO_LOW`(400, 순서대로 최신 가격을 읽고 정상 거절).
   - 분산 락 덕에 읽기 경합이 사라져, 충돌(409) 대신 정상 업무 거절(400)이 됨.
 
+## 완료 (D8)
+
+- Kafka 이벤트 프로듀서·컨슈머 구축 (auction-service → bid-service).
+  - auction-service: `AuctionEventProducer` — `KafkaTemplate`으로 `auction-events` 토픽에 이벤트 발행. 파티션 키: `auctionId`(String). type header 활성화로 컨슈머 자동 타입 감지.
+  - `AuctionController.startAuction()`: 트랜잭션 커밋 후(컨트롤러 레벨) `AuctionStartedEvent` 발행. phantom event 방지.
+  - `AuctionSettlementScheduler.closeEndedAuctions()`: `closeAuction()` 트랜잭션 커밋 후 `AuctionClosedEvent` 발행.
+  - bid-service: `AuctionEventConsumer` — `@KafkaListener` + `@KafkaHandler`로 `AuctionStartedEvent`/`AuctionClosedEvent` 타입별 핸들링. D8에서는 수신 로그만 남김.
+  - bid-service: Kafka 컨슈머 설정 (`group-id: bid-service-group`, `JsonDeserializer`, `trusted.packages`).
+  - 이벤트 DTO: D1에서 정의한 `AuctionStartedEvent`/`AuctionClosedEvent`(common 모듈) 그대로 사용.
+- 검증 상태: 단위 테스트 213개(auction 76 (+5), bid 72 (+3), payment 37, gateway 28) 통과. `./gradlew clean build` 통과.
+
+### D8의 한계 (이후 일차에서 해결)
+
+- 이벤트 발행이 DB 트랜잭션과 원자적이지 않다: 트랜잭션 커밋 후 Kafka 발행 전에 애플리케이션이 죽으면 이벤트 유실. D11 Outbox 패턴으로 해결.
+- bid-service 컨슈머가 로그만 남긴다. 경매 상태 로컬 캐시(Feign 조회 제거)는 향후 과제.
+- `auction-events` 토픽의 나머지 이벤트(AuctionWonEvent, WinnerReassignedEvent)는 D9~D10에서 추가.
+
 ## 남은 범위
 
-- **D8~D9:** CI 파이프라인(GitHub Actions), Terraform 시작
-- **D8~D13:** Kafka, Saga(낙찰→결제 이벤트화, 차순위 승계), Outbox, 멱등 컨슈머, Retry/DLQ
+- **D9:** Saga — 낙찰→결제 Feign 동기 호출을 AuctionWonEvent Kafka 이벤트로 대체, PaymentCompleted/FailedEvent 소비
+- **D10:** 차순위 승계 — PaymentFailed → WinnerReassignedEvent, 다음 입찰자 자동 승계
+- **D11:** Outbox 패턴 — DB 트랜잭션과 이벤트 발행의 원자성 보장
+- **D12~D13:** 멱등 컨슈머, Retry/DLQ
 - **D14~D21:** CQRS, Event Sourcing(선택), K8s 배포, Terraform 심화
 - **D22~D30:** 관측성, CD 완성, 부하 테스트, 문서화
 

@@ -2,6 +2,7 @@ package com.auction.auction.controller;
 
 import com.auction.auction.domain.AuctionStatus;
 import com.auction.auction.dto.AuctionResponse;
+import com.auction.auction.event.AuctionEventProducer;
 import com.auction.auction.exception.GlobalExceptionHandler;
 import com.auction.auction.service.AuctionService;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +26,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -35,11 +37,14 @@ class AuctionControllerTest {
     @Mock
     private AuctionService auctionService;
 
+    @Mock
+    private AuctionEventProducer eventProducer;
+
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(new AuctionController(auctionService))
+        mockMvc = MockMvcBuilders.standaloneSetup(new AuctionController(auctionService, eventProducer))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -121,5 +126,20 @@ class AuctionControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.auctionId").value(100))
                 .andExpect(jsonPath("$.sellerId").value(10));
+    }
+
+    @Test
+    @DisplayName("PATCH /api/v1/auctions/{id}/start: 정상 시작 시 AuctionStartedEvent를 발행한다")
+    void startAuction_publishesEvent() throws Exception {
+        AuctionResponse response = sampleResponse();
+        ReflectionTestUtils.setField(response, "status", AuctionStatus.ACTIVE);
+        when(auctionService.startAuction(10L, 100L)).thenReturn(response);
+
+        mockMvc.perform(patch("/api/v1/auctions/100/start")
+                        .header("X-User-Id", 10L))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
+
+        verify(eventProducer).publishStarted(response);
     }
 }
