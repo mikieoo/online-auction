@@ -3,6 +3,7 @@ package com.auction.auction.event;
 import com.auction.auction.dto.AuctionResponse;
 import com.auction.common.event.AuctionClosedEvent;
 import com.auction.common.event.AuctionStartedEvent;
+import com.auction.common.event.AuctionWonEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -39,6 +40,19 @@ public class AuctionEventProducer {
                 response.getEndTime()
         );
         send(event.getAuctionId(), event, "AuctionStartedEvent");
+    }
+
+    public void publishWon(Long auctionId, Long winnerId, java.math.BigDecimal winningPrice,
+                           String idempotencyKey) {
+        AuctionWonEvent event = new AuctionWonEvent(
+                UUID.randomUUID().toString(),
+                LocalDateTime.now(),
+                auctionId,
+                winnerId,
+                winningPrice,
+                idempotencyKey
+        );
+        send(auctionId, event, "AuctionWonEvent");
     }
 
     public void publishClosed(Long auctionId) {

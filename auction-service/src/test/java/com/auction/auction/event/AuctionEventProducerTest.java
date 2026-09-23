@@ -3,6 +3,7 @@ package com.auction.auction.event;
 import com.auction.auction.dto.AuctionResponse;
 import com.auction.common.event.AuctionClosedEvent;
 import com.auction.common.event.AuctionStartedEvent;
+import com.auction.common.event.AuctionWonEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -74,6 +75,23 @@ class AuctionEventProducerTest {
 
         AuctionClosedEvent event = captor.getValue();
         assertThat(event.getAuctionId()).isEqualTo(200L);
+        assertThat(event.getEventId()).isNotNull();
+        assertThat(event.getOccurredAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("publishWon: auction-events 토픽에 AuctionWonEvent를 auctionId 키로 발행한다")
+    void publishWon_sendsToCorrectTopicAndKey() {
+        producer.publishWon(300L, 77L, new BigDecimal("15000.00"), "300-77-0");
+
+        ArgumentCaptor<AuctionWonEvent> captor = ArgumentCaptor.forClass(AuctionWonEvent.class);
+        verify(kafkaTemplate).send(eq("auction-events"), eq("300"), captor.capture());
+
+        AuctionWonEvent event = captor.getValue();
+        assertThat(event.getAuctionId()).isEqualTo(300L);
+        assertThat(event.getWinnerId()).isEqualTo(77L);
+        assertThat(event.getWinningPrice()).isEqualByComparingTo("15000.00");
+        assertThat(event.getIdempotencyKey()).isEqualTo("300-77-0");
         assertThat(event.getEventId()).isNotNull();
         assertThat(event.getOccurredAt()).isNotNull();
     }
