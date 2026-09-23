@@ -161,43 +161,15 @@ class AuctionSettlementServiceTest {
         verify(auctionRepository, never()).save(any());
     }
 
-    // ---------- completeWithWinner ----------
+    // ---------- assignWinnerForPayment ----------
 
     @Test
-    @DisplayName("completeWithWinner: winner·winningPrice 지정 + COMPLETED를 한 번의 저장으로 처리한다")
-    void completeWithWinner_assignsAndCompletes() {
+    @DisplayName("assignWinnerForPayment: winner·winningPrice를 저장하고 CLOSED를 유지한다")
+    void assignWinnerForPayment_assignsWinnerKeepsClosed() {
         Auction auction = closedAuction();
         when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
 
-        service.completeWithWinner(AUCTION_ID, WINNER_ID, PRICE);
-
-        assertThat(auction.getStatus()).isEqualTo(AuctionStatus.COMPLETED);
-        assertThat(auction.getWinnerId()).isEqualTo(WINNER_ID);
-        assertThat(auction.getWinningPrice()).isEqualByComparingTo(PRICE);
-        verify(auctionRepository).save(auction);
-    }
-
-    @Test
-    @DisplayName("completeWithWinner: CLOSED가 아닌 경매에는 낙찰자를 지정할 수 없다")
-    void completeWithWinner_nonClosedThrows() {
-        Auction auction = activeAuction();
-        when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
-
-        assertThatThrownBy(() -> service.completeWithWinner(AUCTION_ID, WINNER_ID, PRICE))
-                .isInstanceOf(IllegalStateException.class);
-        assertThat(auction.getWinnerId()).isNull();
-        verify(auctionRepository, never()).save(any());
-    }
-
-    // ---------- recordPaymentFailed ----------
-
-    @Test
-    @DisplayName("recordPaymentFailed: winner·winningPrice만 저장하고 상태는 CLOSED를 유지한다")
-    void recordPaymentFailed_assignsWinnerKeepsClosed() {
-        Auction auction = closedAuction();
-        when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
-
-        service.recordPaymentFailed(AUCTION_ID, WINNER_ID, PRICE);
+        service.assignWinnerForPayment(AUCTION_ID, WINNER_ID, PRICE);
 
         assertThat(auction.getStatus()).isEqualTo(AuctionStatus.CLOSED);
         assertThat(auction.getWinnerId()).isEqualTo(WINNER_ID);
@@ -206,12 +178,51 @@ class AuctionSettlementServiceTest {
     }
 
     @Test
-    @DisplayName("recordPaymentFailed: CLOSED가 아니면 예외, 저장 없음")
-    void recordPaymentFailed_nonClosedThrows() {
-        Auction auction = waitingAuction();
+    @DisplayName("assignWinnerForPayment: CLOSED가 아닌 경매에는 낙찰자를 지정할 수 없다")
+    void assignWinnerForPayment_nonClosedThrows() {
+        Auction auction = activeAuction();
         when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
 
-        assertThatThrownBy(() -> service.recordPaymentFailed(AUCTION_ID, WINNER_ID, PRICE))
+        assertThatThrownBy(() -> service.assignWinnerForPayment(AUCTION_ID, WINNER_ID, PRICE))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(auction.getWinnerId()).isNull();
+        verify(auctionRepository, never()).save(any());
+    }
+
+    // ---------- completeAuction ----------
+
+    @Test
+    @DisplayName("completeAuction: CLOSED 경매를 COMPLETED로 전이한다")
+    void completeAuction_closedBecomesCompleted() {
+        Auction auction = closedAuction();
+        when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
+
+        service.completeAuction(AUCTION_ID);
+
+        assertThat(auction.getStatus()).isEqualTo(AuctionStatus.COMPLETED);
+        verify(auctionRepository).save(auction);
+    }
+
+    @Test
+    @DisplayName("completeAuction: 이미 COMPLETED이면 무시한다(멱등)")
+    void completeAuction_alreadyCompletedIsIdempotent() {
+        Auction auction = closedAuction();
+        auction.complete();
+        when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
+
+        service.completeAuction(AUCTION_ID);
+
+        assertThat(auction.getStatus()).isEqualTo(AuctionStatus.COMPLETED);
+        verify(auctionRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("completeAuction: ACTIVE 경매에 complete()하면 예외")
+    void completeAuction_activeThrows() {
+        Auction auction = activeAuction();
+        when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
+
+        assertThatThrownBy(() -> service.completeAuction(AUCTION_ID))
                 .isInstanceOf(IllegalStateException.class);
         verify(auctionRepository, never()).save(any());
     }

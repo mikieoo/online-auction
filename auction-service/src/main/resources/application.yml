@@ -18,6 +18,13 @@ spring:
     open-in-view: false
   kafka:
     bootstrap-servers: localhost:9092
+    consumer:
+      group-id: auction-service-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: "com.auction.common.event"
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
@@ -40,13 +47,7 @@ scheduler:
     # 마감·정산 스케줄러 실행 간격(ms). 이전 실행 종료 후 이 시간이 지나면 다음 실행.
     fixed-delay: 5000
     # B단계(정산)에서 한 틱에 처리할 최대 경매 수.
-    # 틱당 처리 건수 × Feign 타임아웃 합이 lockAtMostFor를 넘으면 락 만료 후 중복 실행 가능.
-    # 예: 50건 × (bid 5s + payment 5s 읽기 타임아웃) = 최악 500s > lockAtMostFor 30s.
-    # 정상 응답 시엔 수십 ms/건이라 문제 없지만, 다운스트림이 전부 타임아웃 나는 상황에서는
-    # 이 값을 줄이거나 lockAtMostFor(SchedulerConfig)를 늘려야 한다. 중복 실행돼도 모든 호출은 멱등이라 데이터는 깨지지 않는다.
-    # 서킷 브레이커가 OPEN이 되면 스케줄러가 그 틱의 남은 정산을 즉시 중단하므로 최악 시간은 크게 줄어든다.
-    # 다만 브레이커가 열리기까지의 실패 호출(minimum-number-of-calls 5건 안팎 × 타임아웃)은 그대로 걸리므로
-    # 첫 장애 틱은 여전히 30s 근처까지 갈 수 있다 — 위 주의는 유효하다.
+    # D9부터 결제는 Kafka 이벤트로 비동기 처리하므로, 틱당 병목은 bid-service gRPC 호출뿐이다.
     settlement-batch-size: 50
 
 # 기본은 Eureka + Spring Cloud LoadBalancer로 대상을 찾는다(url 미지정).

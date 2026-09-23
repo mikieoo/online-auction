@@ -99,9 +99,18 @@
 - bid-service 컨슈머가 로그만 남긴다. 경매 상태 로컬 캐시(Feign 조회 제거)는 향후 과제.
 - `auction-events` 토픽의 나머지 이벤트(AuctionWonEvent, WinnerReassignedEvent)는 D9~D10에서 추가.
 
+## 완료 (D9)
+
+- Saga(Choreography): 동기 Feign 결제 호출을 Kafka 이벤트 기반 비동기 흐름으로 전환.
+  - auction-service: 스케줄러에서 PaymentClient 의존성 완전 제거. 낙찰자 확정(`assignWinnerForPayment`) 후 `AuctionWonEvent` 발행. `PaymentEventConsumer`가 `payment-events` 토픽에서 `PaymentCompletedEvent` 수신 → `completeAuction()`(멱등).
+  - payment-service: `AuctionWonEventConsumer`가 `auction-events` 토픽에서 `AuctionWonEvent` 수신 → `PaymentService.process()`(멱등키) → `PaymentEventProducer`가 결제 결과 이벤트 발행.
+  - `AuctionSettlementService`: `completeWithWinner()`/`recordPaymentFailed()` 제거 → `assignWinnerForPayment()`(CLOSED 유지+winnerId 기록)/`completeAuction()`(CLOSED→COMPLETED, 멱등) 신설.
+  - 상태 인코딩: CLOSED+winnerId=NULL(정산 대기), CLOSED+winnerId(결제 대기), COMPLETED(성공), FAILED+NULL(유찰).
+  - idempotencyKey: `{auctionId}-{winnerId}-{reassignmentCount}` — 재지정마다 별도 결제.
+- 검증 상태: 단위 테스트 220개(auction 76, bid 72, payment 44 (+7), gateway 28) 통과. `./gradlew clean build` 통과.
+
 ## 남은 범위
 
-- **D9:** Saga — 낙찰→결제 Feign 동기 호출을 AuctionWonEvent Kafka 이벤트로 대체, PaymentCompleted/FailedEvent 소비
 - **D10:** 차순위 승계 — PaymentFailed → WinnerReassignedEvent, 다음 입찰자 자동 승계
 - **D11:** Outbox 패턴 — DB 트랜잭션과 이벤트 발행의 원자성 보장
 - **D12~D13:** 멱등 컨슈머, Retry/DLQ
