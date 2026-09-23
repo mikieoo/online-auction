@@ -8,6 +8,7 @@ import com.auction.auction.client.PaymentStatus;
 import com.auction.auction.client.WinnerResponse;
 import com.auction.auction.client.WinningBidResponse;
 import com.auction.auction.dto.SettlementTarget;
+import com.auction.auction.event.AuctionEventProducer;
 import com.auction.auction.service.AuctionSettlementService;
 import feign.FeignException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
@@ -58,11 +59,14 @@ class AuctionSettlementSchedulerTest {
     @Mock
     private PaymentClient paymentClient;
 
+    @Mock
+    private AuctionEventProducer eventProducer;
+
     private AuctionSettlementScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new AuctionSettlementScheduler(settlementService, bidGrpcClient, paymentClient, BATCH_SIZE);
+        scheduler = new AuctionSettlementScheduler(settlementService, bidGrpcClient, paymentClient, eventProducer, BATCH_SIZE);
     }
 
     private static WinnerResponse winner(Long auctionId, Long bidderId, BigDecimal amount) {
@@ -113,6 +117,29 @@ class AuctionSettlementSchedulerTest {
             scheduler.settle();
 
             verify(settlementService).closeAuction(OTHER_AUCTION_ID);
+        }
+
+        @Test
+        @DisplayName("마감 성공 시 AuctionClosedEvent를 발행한다")
+        void closePublishesEvent() {
+            when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of(AUCTION_ID));
+            when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of());
+
+            scheduler.settle();
+
+            verify(eventProducer).publishClosed(AUCTION_ID);
+        }
+
+        @Test
+        @DisplayName("마감 실패 시 이벤트를 발행하지 않는다")
+        void closeFailureDoesNotPublishEvent() {
+            when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of(AUCTION_ID));
+            when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of());
+            doThrow(new IllegalStateException("마감 실패")).when(settlementService).closeAuction(AUCTION_ID);
+
+            scheduler.settle();
+
+            verify(eventProducer, never()).publishClosed(AUCTION_ID);
         }
 
         @Test
