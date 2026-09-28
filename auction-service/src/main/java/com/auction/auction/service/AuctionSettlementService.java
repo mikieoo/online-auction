@@ -85,6 +85,28 @@ public class AuctionSettlementService {
         auctionRepository.save(auction);
     }
 
+    /**
+     * 차순위 승계: 이전 낙찰자를 초기화하고 새 낙찰자를 한 트랜잭션에서 지정한다.
+     * @return 증가된 reassignmentCount (idempotencyKey 생성에 사용)
+     */
+    @Transactional
+    public int reassignWinner(Long auctionId, Long newWinnerId, BigDecimal amount) {
+        Auction auction = findAuction(auctionId);
+        auction.resetForReassignment();
+        auction.assignWinner(newWinnerId, amount);
+        auctionRepository.save(auction);
+        return auction.getReassignmentCount();
+    }
+
+    /** 차순위 입찰자 없음: 이전 낙찰자를 초기화하고 FAILED(유찰)로 전이한다. */
+    @Transactional
+    public void failAfterAllBiddersExhausted(Long auctionId) {
+        Auction auction = findAuction(auctionId);
+        auction.resetForReassignment();
+        auction.fail();
+        auctionRepository.save(auction);
+    }
+
     /** PaymentCompletedEvent 수신 시: CLOSED → COMPLETED. 이미 COMPLETED이면 무시(멱등). */
     @Transactional
     public void completeAuction(Long auctionId) {

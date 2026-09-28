@@ -40,14 +40,13 @@ class BidTest {
     }
 
     @Test
-    @DisplayName("OUTBID → WINNER 전이는 금지된다")
-    void outbidToWinnerForbidden() {
+    @DisplayName("OUTBID → WINNER 전이는 허용된다 (차순위 승계)")
+    void outbidToWinnerAllowed() {
         Bid bid = newBid();
         bid.markOutbid();
 
-        assertThatThrownBy(bid::markWinner)
-                .isInstanceOf(IllegalStateException.class);
-        assertThat(bid.getStatus()).isEqualTo(BidStatus.OUTBID);
+        bid.markWinner();
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.WINNER);
     }
 
     @Test
@@ -61,9 +60,41 @@ class BidTest {
     }
 
     @Test
-    @DisplayName("BidStatus는 ACTIVE, OUTBID, WINNER 세 값만 가진다")
+    @DisplayName("WINNER → DISQUALIFIED 전이는 허용된다")
+    void winnerToDisqualified() {
+        Bid bid = newBid();
+        bid.markWinner();
+
+        bid.disqualify();
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.DISQUALIFIED);
+    }
+
+    @Test
+    @DisplayName("ACTIVE 상태에서 disqualify를 호출하면 금지된다")
+    void activeToDisqualifiedForbidden() {
+        Bid bid = newBid();
+
+        assertThatThrownBy(bid::disqualify)
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.ACTIVE);
+    }
+
+    @Test
+    @DisplayName("DISQUALIFIED 상태에서 markWinner를 호출하면 금지된다")
+    void disqualifiedToWinnerForbidden() {
+        Bid bid = newBid();
+        bid.markWinner();
+        bid.disqualify();
+
+        assertThatThrownBy(bid::markWinner)
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(bid.getStatus()).isEqualTo(BidStatus.DISQUALIFIED);
+    }
+
+    @Test
+    @DisplayName("BidStatus는 ACTIVE, OUTBID, WINNER, DISQUALIFIED 네 값을 가진다")
     void statusValues() {
         assertThat(BidStatus.values())
-                .containsExactlyInAnyOrder(BidStatus.ACTIVE, BidStatus.OUTBID, BidStatus.WINNER);
+                .containsExactlyInAnyOrder(BidStatus.ACTIVE, BidStatus.OUTBID, BidStatus.WINNER, BidStatus.DISQUALIFIED);
     }
 }

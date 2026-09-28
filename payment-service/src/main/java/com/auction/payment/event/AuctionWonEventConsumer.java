@@ -1,6 +1,7 @@
 package com.auction.payment.event;
 
 import com.auction.common.event.AuctionWonEvent;
+import com.auction.common.event.WinnerReassignedEvent;
 import com.auction.payment.domain.Payment;
 import com.auction.payment.domain.PaymentStatus;
 import com.auction.payment.dto.PaymentProcessResult;
@@ -62,6 +63,38 @@ public class AuctionWonEventConsumer {
             }
         } catch (RuntimeException e) {
             log.error("결제 처리 실패. auctionId={}, winnerId={}", event.getAuctionId(), event.getWinnerId(), e);
+        }
+    }
+
+    @KafkaHandler
+    public void handleWinnerReassigned(WinnerReassignedEvent event) {
+        log.info("차순위 승계 이벤트 수신. eventId={}, auctionId={}, newWinnerId={}, amount={}",
+                event.getEventId(), event.getAuctionId(), event.getNewWinnerId(), event.getNewWinningPrice());
+        try {
+            PaymentRequest request = new PaymentRequest();
+            request.setAuctionId(event.getAuctionId());
+            request.setPayerId(event.getNewWinnerId());
+            request.setAmount(event.getNewWinningPrice());
+            request.setIdempotencyKey(event.getIdempotencyKey());
+
+            PaymentProcessResult result = paymentService.process(request);
+            Payment payment = result.getPayment();
+
+            if (payment.getStatus() == PaymentStatus.COMPLETED) {
+                eventProducer.publishCompleted(payment);
+                log.info("차순위 결제 완료, PaymentCompletedEvent 발행. auctionId={}, paymentId={}",
+                        event.getAuctionId(), payment.getPaymentId());
+            } else if (payment.getStatus() == PaymentStatus.FAILED) {
+                eventProducer.publishFailed(payment);
+                log.info("차순위 결제 실패, PaymentFailedEvent 발행. auctionId={}, paymentId={}, reason={}",
+                        event.getAuctionId(), payment.getPaymentId(), payment.getFailureReason());
+            } else {
+                log.warn("결제가 REQUESTED 상태로 남아 있습니다. auctionId={}, paymentId={}",
+                        event.getAuctionId(), payment.getPaymentId());
+            }
+        } catch (RuntimeException e) {
+            log.error("차순위 결제 처리 실패. auctionId={}, newWinnerId={}",
+                    event.getAuctionId(), event.getNewWinnerId(), e);
         }
     }
 

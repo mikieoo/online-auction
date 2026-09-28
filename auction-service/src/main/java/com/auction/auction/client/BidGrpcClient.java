@@ -3,6 +3,7 @@ package com.auction.auction.client;
 import com.auction.common.grpc.BidWinnerServiceGrpc;
 import com.auction.common.grpc.ConfirmWinnerRequest;
 import com.auction.common.grpc.ConfirmWinnerResponse;
+import com.auction.common.grpc.ReassignWinnerRequest;
 import com.auction.common.grpc.WinningBid;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -64,6 +65,26 @@ public class BidGrpcClient {
                     ConfirmWinnerResponse response = stub
                             .withDeadlineAfter(deadlineMs, TimeUnit.MILLISECONDS)
                             .confirmWinner(request);
+                    return toWinnerResponse(response);
+                });
+        return decorated.get();
+    }
+
+    /**
+     * 차순위 승계. 결제 실패 입찰자를 DISQUALIFIED로 내리고 다음 최고가 입찰자를 WINNER로 승격한다.
+     * 차순위가 없으면 hasBids=false.
+     */
+    public WinnerResponse reassignWinner(Long auctionId, Long failedBidderId) {
+        Supplier<WinnerResponse> decorated = CircuitBreaker.decorateSupplier(
+                circuitBreaker,
+                () -> {
+                    ReassignWinnerRequest request = ReassignWinnerRequest.newBuilder()
+                            .setAuctionId(auctionId)
+                            .setFailedBidderId(failedBidderId)
+                            .build();
+                    ConfirmWinnerResponse response = stub
+                            .withDeadlineAfter(deadlineMs, TimeUnit.MILLISECONDS)
+                            .reassignWinner(request);
                     return toWinnerResponse(response);
                 });
         return decorated.get();

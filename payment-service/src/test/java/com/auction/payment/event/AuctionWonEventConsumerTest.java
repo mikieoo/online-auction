@@ -1,6 +1,7 @@
 package com.auction.payment.event;
 
 import com.auction.common.event.AuctionWonEvent;
+import com.auction.common.event.WinnerReassignedEvent;
 import com.auction.payment.domain.Payment;
 import com.auction.payment.domain.PaymentStatus;
 import com.auction.payment.dto.PaymentProcessResult;
@@ -105,6 +106,54 @@ class AuctionWonEventConsumerTest {
         verify(eventProducer, never()).publishCompleted(any());
         verify(eventProducer, never()).publishFailed(any());
     }
+
+    // ---------- WinnerReassignedEvent ----------
+
+    @Test
+    @DisplayName("차순위 승계 이벤트 수신 시 결제를 처리하고 결과 이벤트를 발행한다")
+    void handleWinnerReassigned_completed_publishesCompletedEvent() {
+        WinnerReassignedEvent event = new WinnerReassignedEvent(
+                "evt-r1", LocalDateTime.now(), 100L, 88L, new BigDecimal("12000.00"), "100-88-1");
+        Payment payment = new Payment(100L, 88L, new BigDecimal("12000.00"), "100-88-1");
+        ReflectionTestUtils.setField(payment, "paymentId", 901L);
+        payment.complete();
+
+        when(paymentService.process(any())).thenReturn(PaymentProcessResult.created(payment));
+
+        consumer.handleWinnerReassigned(event);
+
+        verify(eventProducer).publishCompleted(payment);
+        verify(eventProducer, never()).publishFailed(any());
+    }
+
+    @Test
+    @DisplayName("차순위 결제 실패 시 PaymentFailedEvent를 발행한다")
+    void handleWinnerReassigned_failed_publishesFailedEvent() {
+        WinnerReassignedEvent event = new WinnerReassignedEvent(
+                "evt-r2", LocalDateTime.now(), 100L, 88L, new BigDecimal("12000.00"), "100-88-1");
+        Payment payment = new Payment(100L, 88L, new BigDecimal("12000.00"), "100-88-1");
+        ReflectionTestUtils.setField(payment, "paymentId", 901L);
+        payment.fail("SIMULATED_FAILURE");
+
+        when(paymentService.process(any())).thenReturn(PaymentProcessResult.created(payment));
+
+        consumer.handleWinnerReassigned(event);
+
+        verify(eventProducer).publishFailed(payment);
+        verify(eventProducer, never()).publishCompleted(any());
+    }
+
+    @Test
+    @DisplayName("차순위 결제 처리 중 예외가 발생해도 전파되지 않는다")
+    void handleWinnerReassigned_exceptionSwallowed() {
+        WinnerReassignedEvent event = new WinnerReassignedEvent(
+                "evt-r3", LocalDateTime.now(), 100L, 88L, new BigDecimal("12000.00"), "100-88-1");
+        when(paymentService.process(any())).thenThrow(new RuntimeException("DB error"));
+
+        assertThatCode(() -> consumer.handleWinnerReassigned(event)).doesNotThrowAnyException();
+    }
+
+    // ---------- 알 수 없는 이벤트 ----------
 
     @Test
     @DisplayName("알 수 없는 이벤트 수신 시 예외 없이 처리한다")

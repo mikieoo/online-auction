@@ -4,6 +4,7 @@ import com.auction.auction.dto.AuctionResponse;
 import com.auction.common.event.AuctionClosedEvent;
 import com.auction.common.event.AuctionStartedEvent;
 import com.auction.common.event.AuctionWonEvent;
+import com.auction.common.event.WinnerReassignedEvent;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -92,6 +93,23 @@ class AuctionEventProducerTest {
         assertThat(event.getWinnerId()).isEqualTo(77L);
         assertThat(event.getWinningPrice()).isEqualByComparingTo("15000.00");
         assertThat(event.getIdempotencyKey()).isEqualTo("300-77-0");
+        assertThat(event.getEventId()).isNotNull();
+        assertThat(event.getOccurredAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("publishReassigned: auction-events 토픽에 WinnerReassignedEvent를 auctionId 키로 발행한다")
+    void publishReassigned_sendsToCorrectTopicAndKey() {
+        producer.publishReassigned(400L, 88L, new BigDecimal("12000.00"), "400-88-1");
+
+        ArgumentCaptor<WinnerReassignedEvent> captor = ArgumentCaptor.forClass(WinnerReassignedEvent.class);
+        verify(kafkaTemplate).send(eq("auction-events"), eq("400"), captor.capture());
+
+        WinnerReassignedEvent event = captor.getValue();
+        assertThat(event.getAuctionId()).isEqualTo(400L);
+        assertThat(event.getNewWinnerId()).isEqualTo(88L);
+        assertThat(event.getNewWinningPrice()).isEqualByComparingTo("12000.00");
+        assertThat(event.getIdempotencyKey()).isEqualTo("400-88-1");
         assertThat(event.getEventId()).isNotNull();
         assertThat(event.getOccurredAt()).isNotNull();
     }

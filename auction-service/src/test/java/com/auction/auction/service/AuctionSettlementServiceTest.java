@@ -226,4 +226,43 @@ class AuctionSettlementServiceTest {
                 .isInstanceOf(IllegalStateException.class);
         verify(auctionRepository, never()).save(any());
     }
+
+    // ---------- reassignWinner ----------
+
+    @Test
+    @DisplayName("reassignWinner: 이전 낙찰자 초기화 + 새 낙찰자 지정을 한 트랜잭션에서 수행한다")
+    void reassignWinner_resetsAndAssignsNew() {
+        Auction auction = closedAuction();
+        auction.assignWinner(WINNER_ID, PRICE);
+        when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
+
+        Long newWinnerId = 88L;
+        BigDecimal newPrice = new BigDecimal("12000.00");
+        int count = service.reassignWinner(AUCTION_ID, newWinnerId, newPrice);
+
+        assertThat(auction.getStatus()).isEqualTo(AuctionStatus.CLOSED);
+        assertThat(auction.getWinnerId()).isEqualTo(newWinnerId);
+        assertThat(auction.getWinningPrice()).isEqualByComparingTo(newPrice);
+        assertThat(auction.getReassignmentCount()).isEqualTo(1);
+        assertThat(count).isEqualTo(1);
+        verify(auctionRepository).save(auction);
+    }
+
+    // ---------- failAfterAllBiddersExhausted ----------
+
+    @Test
+    @DisplayName("failAfterAllBiddersExhausted: 이전 낙찰자 초기화 후 FAILED로 전이한다")
+    void failAfterAllBiddersExhausted_resetsAndFails() {
+        Auction auction = closedAuction();
+        auction.assignWinner(WINNER_ID, PRICE);
+        when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
+
+        service.failAfterAllBiddersExhausted(AUCTION_ID);
+
+        assertThat(auction.getStatus()).isEqualTo(AuctionStatus.FAILED);
+        assertThat(auction.getWinnerId()).isNull();
+        assertThat(auction.getWinningPrice()).isNull();
+        assertThat(auction.getReassignmentCount()).isEqualTo(1);
+        verify(auctionRepository).save(auction);
+    }
 }

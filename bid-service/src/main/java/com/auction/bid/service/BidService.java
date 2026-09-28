@@ -146,6 +146,41 @@ public class BidService {
     }
 
     /**
+     * 차순위 승계(D10). 결제 실패한 낙찰자를 DISQUALIFIED로 내리고 다음 최고가 OUTBID 입찰을 WINNER로 승격한다.
+     * 이미 새 WINNER가 있으면 그대로 반환(멱등). 차순위가 없으면 hasBids=false.
+     */
+    @Transactional
+    public WinnerResponse reassignWinner(Long auctionId, Long failedBidderId) {
+        Optional<Bid> currentWinner = bidRepository.findByAuctionIdAndStatus(auctionId, BidStatus.WINNER);
+
+        if (currentWinner.isPresent()) {
+            Bid winner = currentWinner.get();
+            if (!winner.getBidderId().equals(failedBidderId)) {
+                // 이미 새 낙찰자가 지정됨(멱등)
+                return WinnerResponse.of(auctionId, winner);
+            }
+            winner.disqualify();
+            bidRepository.save(winner);
+            log.info("낙찰 실격 처리. auctionId={}, bidderId={}", auctionId, failedBidderId);
+        }
+
+        Optional<Bid> nextBid = bidRepository.findFirstByAuctionIdAndStatusOrderByAmountDesc(
+                auctionId, BidStatus.OUTBID);
+
+        if (nextBid.isEmpty()) {
+            log.info("차순위 입찰자 없음(유찰). auctionId={}", auctionId);
+            return WinnerResponse.noBids(auctionId);
+        }
+
+        Bid next = nextBid.get();
+        next.markWinner();
+        bidRepository.save(next);
+        log.info("차순위 승계 완료. auctionId={}, newWinnerId={}, amount={}",
+                auctionId, next.getBidderId(), next.getAmount());
+        return WinnerResponse.of(auctionId, next);
+    }
+
+    /**
      * 예외 매핑은 AuctionClientFallbackFactory 한 곳에서 끝난다(404/502는 그대로, 연결 실패·타임아웃·5xx·서킷 OPEN은 503).
      * 여기서 FeignException을 다시 잡으면 매핑이 두 군데로 갈라지므로 두지 않는다.
      * 경매 상태 없이 입찰을 받는 대체 경로는 없다 — 조회가 실패하면 입찰도 실패한다.
