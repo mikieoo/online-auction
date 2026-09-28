@@ -1,43 +1,53 @@
 package com.auction.payment.service;
 
+import com.auction.common.event.PaymentCompletedEvent;
+import com.auction.common.event.PaymentFailedEvent;
 import com.auction.payment.domain.Payment;
+import com.auction.payment.event.OutboxEventRecorder;
 import com.auction.payment.exception.PaymentNotFoundException;
 import com.auction.payment.repository.PaymentRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.UUID;
 
 /**
  * 결제 생성·확정의 트랜잭션 경계.
  *
- * PaymentService(비트랜잭션 파사드)와 분리한 이유: INSERT에서 UNIQUE 위반이 나면
+ * <p>PaymentService(비트랜잭션 파사드)와 분리한 이유: INSERT에서 UNIQUE 위반이 나면
  * 현재 트랜잭션이 rollback-only로 표시되므로, 같은 트랜잭션 안에서 재조회하면
  * 커밋 시 UnexpectedRollbackException이 난다. 재조회는 이 빈의 트랜잭션이 끝난 뒤
- * 파사드에서 수행해야 한다. 별도 빈으로 두어 @Transactional 프록시가 실제로 적용되게 한다.
+ * 파사드에서 수행해야 한다.
+ *
+ * <p><b>D11 Outbox:</b> 결제 확정 후 결과 이벤트(PaymentCompleted/FailedEvent)를
+ * 같은 트랜잭션에서 outbox 테이블에 기록한다. Kafka 직접 발행은 하지 않는다.
  */
 @Service
 public class PaymentTransactionService {
 
     private final PaymentRepository paymentRepository;
     private final PaymentSimulator paymentSimulator;
+    private final OutboxEventRecorder outboxRecorder;
 
     public PaymentTransactionService(PaymentRepository paymentRepository,
-                                     PaymentSimulator paymentSimulator) {
+                                     PaymentSimulator paymentSimulator,
+                                     OutboxEventRecorder outboxRecorder) {
         this.paymentRepository = paymentRepository;
         this.paymentSimulator = paymentSimulator;
+        this.outboxRecorder = outboxRecorder;
     }
 
     /**
-     * REQUESTED로 생성 → 시뮬레이션 → COMPLETED/FAILED 확정을 한 트랜잭션에서 수행한다.
-     * saveAndFlush로 INSERT를 즉시 실행해 UNIQUE 위반이 이 메서드 호출 시점에
-     * DataIntegrityViolationException으로 드러나게 한다.
+     * REQUESTED로 생성 → 시뮬레이션 → COMPLETED/FAILED 확정 → outbox 기록을 한 트랜잭션에서 수행한다.
      */
     @Transactional
     public Payment createAndSettle(Long auctionId, Long payerId, BigDecimal amount, String idempotencyKey) {
         Payment payment = paymentRepository.saveAndFlush(
                 new Payment(auctionId, payerId, amount, idempotencyKey));
         settle(payment);
+        recordOutboxEvent(payment);
         return payment;
     }
 
@@ -51,6 +61,7 @@ public class PaymentTransactionService {
                 .orElseThrow(() -> new PaymentNotFoundException(paymentId));
         if (payment.isRequested()) {
             settle(payment);
+            recordOutboxEvent(payment);
         }
         return payment;
     }
@@ -60,6 +71,21 @@ public class PaymentTransactionService {
             payment.fail(PaymentSimulator.FAILURE_REASON);
         } else {
             payment.complete();
+        }
+    }
+
+    private void recordOutboxEvent(Payment payment) {
+        if (payment.getStatus() == com.auction.payment.domain.PaymentStatus.COMPLETED) {
+            PaymentCompletedEvent event = new PaymentCompletedEvent(
+                    UUID.randomUUID().toString(), LocalDateTime.now(),
+                    payment.getAuctionId(), payment.getPaymentId());
+            outboxRecorder.record("Payment", payment.getAuctionId(), event);
+        } else if (payment.getStatus() == com.auction.payment.domain.PaymentStatus.FAILED) {
+            PaymentFailedEvent event = new PaymentFailedEvent(
+                    UUID.randomUUID().toString(), LocalDateTime.now(),
+                    payment.getAuctionId(), payment.getPaymentId(),
+                    payment.getPayerId(), payment.getFailureReason());
+            outboxRecorder.record("Payment", payment.getAuctionId(), event);
         }
     }
 }

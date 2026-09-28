@@ -118,9 +118,19 @@
   - 연쇄 승계: 각 실패마다 DISQUALIFIED로 영구 제외, OUTBID가 고갈되면 FAILED.
 - 검증 상태: 단위 테스트 235개(auction 81 (+5), bid 79 (+7), payment 47 (+3), gateway 28) 통과. `./gradlew clean build` 통과.
 
-## 남은 범위
+## 완료 (D11)
 
-- **D11:** Outbox 패턴 — DB 트랜잭션과 이벤트 발행의 원자성 보장
+- Outbox 패턴(Polling Publisher): DB 트랜잭션과 Kafka 이벤트 발행의 원자성 보장.
+  - auction-service·payment-service 양쪽에 outbox 테이블 + ShedLock 테이블 추가.
+  - `OutboxEvent` 엔티티, `OutboxRepository`, `OutboxEventRecorder`(트랜잭션 안에서 호출), `OutboxPublisher`(@Scheduled + @SchedulerLock + @Transactional 폴링 발행).
+  - 6개 발행 지점을 모두 Kafka 직접 발행 → outbox INSERT로 전환:
+    - auction: `startAuction(AuctionStartedEvent)`, `closeAuction(AuctionClosedEvent)`, `assignWinnerForPayment(AuctionWonEvent)`, `reassignWinner(WinnerReassignedEvent)`.
+    - payment: `createAndSettle(PaymentCompletedEvent/PaymentFailedEvent)`, `resettle(동일)`.
+  - `AuctionEventProducer`, `PaymentEventProducer` 삭제. 컨트롤러·스케줄러·컨슈머에서 프로듀서 의존성 제거.
+  - OutboxPublisher: JSON 직렬화 → outbox 저장 → 폴러가 역직렬화 후 KafkaTemplate으로 전송(type header 유지) → at-least-once 보장.
+- 검증 상태: 단위 테스트 223개(auction 74, bid 79, payment 42, gateway 28) 통과. `./gradlew clean build` 통과.
+
+## 남은 범위
 - **D12~D13:** 멱등 컨슈머, Retry/DLQ
 - **D14~D21:** CQRS, Event Sourcing(선택), K8s 배포, Terraform 심화
 - **D22~D30:** 관측성, CD 완성, 부하 테스트, 문서화

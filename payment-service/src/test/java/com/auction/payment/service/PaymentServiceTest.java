@@ -6,6 +6,7 @@ import com.auction.payment.dto.PaymentProcessResult;
 import com.auction.payment.dto.PaymentRequest;
 import com.auction.payment.exception.PaymentAccessDeniedException;
 import com.auction.payment.exception.PaymentNotFoundException;
+import com.auction.payment.event.OutboxEventRecorder;
 import com.auction.payment.repository.PaymentRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -33,13 +34,16 @@ class PaymentServiceTest {
     @Mock
     private PaymentRepository paymentRepository;
 
+    @Mock
+    private OutboxEventRecorder outboxRecorder;
+
     private PaymentService paymentService;
 
     @BeforeEach
     void setUp() {
         PaymentSimulator simulator = new PaymentSimulator("9999");
         PaymentTransactionService transactionService =
-                new PaymentTransactionService(paymentRepository, simulator);
+                new PaymentTransactionService(paymentRepository, simulator, outboxRecorder);
         paymentService = new PaymentService(paymentRepository, transactionService);
     }
 

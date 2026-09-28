@@ -2,7 +2,6 @@ package com.auction.auction.controller;
 
 import com.auction.auction.domain.AuctionStatus;
 import com.auction.auction.dto.AuctionResponse;
-import com.auction.auction.event.AuctionEventProducer;
 import com.auction.auction.exception.GlobalExceptionHandler;
 import com.auction.auction.service.AuctionService;
 import org.junit.jupiter.api.BeforeEach;
@@ -37,14 +36,11 @@ class AuctionControllerTest {
     @Mock
     private AuctionService auctionService;
 
-    @Mock
-    private AuctionEventProducer eventProducer;
-
     private MockMvc mockMvc;
 
     @BeforeEach
     void setUp() {
-        mockMvc = MockMvcBuilders.standaloneSetup(new AuctionController(auctionService, eventProducer))
+        mockMvc = MockMvcBuilders.standaloneSetup(new AuctionController(auctionService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -129,8 +125,8 @@ class AuctionControllerTest {
     }
 
     @Test
-    @DisplayName("PATCH /api/v1/auctions/{id}/start: 정상 시작 시 AuctionStartedEvent를 발행한다")
-    void startAuction_publishesEvent() throws Exception {
+    @DisplayName("PATCH /api/v1/auctions/{id}/start: 정상 시작 시 200 + ACTIVE (outbox는 서비스 내부에서 기록)")
+    void startAuction_success() throws Exception {
         AuctionResponse response = sampleResponse();
         ReflectionTestUtils.setField(response, "status", AuctionStatus.ACTIVE);
         when(auctionService.startAuction(10L, 100L)).thenReturn(response);
@@ -140,6 +136,6 @@ class AuctionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ACTIVE"));
 
-        verify(eventProducer).publishStarted(response);
+        verify(auctionService).startAuction(10L, 100L);
     }
 }

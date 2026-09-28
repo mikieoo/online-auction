@@ -4,7 +4,6 @@ import com.auction.auction.client.BidGrpcClient;
 import com.auction.auction.client.WinnerResponse;
 import com.auction.auction.client.WinningBidResponse;
 import com.auction.auction.dto.SettlementTarget;
-import com.auction.auction.event.AuctionEventProducer;
 import com.auction.auction.service.AuctionSettlementService;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.grpc.StatusRuntimeException;
@@ -23,10 +22,8 @@ import java.util.function.Supplier;
  * DB 작업은 경매 1건 = 트랜잭션 1개로 {@link AuctionSettlementService}에 위임하고,
  * bid-service gRPC 호출은 트랜잭션 밖에서 수행한다.
  *
- * <p><b>D9 Saga 전환:</b> 결제 요청이 동기 Feign에서 Kafka 이벤트(AuctionWonEvent)로 바뀌었다.
- * B단계에서 낙찰자를 확정하면 winner_id를 DB에 기록하고 AuctionWonEvent를 발행한다.
- * 결제 결과는 PaymentCompletedEvent/PaymentFailedEvent로 비동기 수신한다({@link
- * com.auction.auction.event.PaymentEventConsumer}).
+ * <p><b>D11 Outbox:</b> 이벤트 발행을 Kafka로 직접 하지 않고, AuctionSettlementService의
+ * 트랜잭션 안에서 outbox 테이블에 기록한다. OutboxPublisher가 폴링하여 Kafka로 전달한다.
  *
  * <p>ShedLock으로 다중 인스턴스에서 한 번에 하나만 실행된다.
  */
@@ -39,16 +36,13 @@ public class AuctionSettlementScheduler {
 
     private final AuctionSettlementService settlementService;
     private final BidGrpcClient bidGrpcClient;
-    private final AuctionEventProducer eventProducer;
     private final int settlementBatchSize;
 
     public AuctionSettlementScheduler(AuctionSettlementService settlementService,
                                       BidGrpcClient bidGrpcClient,
-                                      AuctionEventProducer eventProducer,
                                       @Value("${scheduler.auction.settlement-batch-size:50}") int settlementBatchSize) {
         this.settlementService = settlementService;
         this.bidGrpcClient = bidGrpcClient;
-        this.eventProducer = eventProducer;
         this.settlementBatchSize = settlementBatchSize;
     }
 
@@ -65,7 +59,6 @@ public class AuctionSettlementScheduler {
         for (Long auctionId : auctionIds) {
             try {
                 settlementService.closeAuction(auctionId);
-                eventProducer.publishClosed(auctionId);
                 log.info("경매 마감 처리 완료. auctionId={}", auctionId);
             } catch (RuntimeException e) {
                 log.warn("경매 마감 처리 실패, 다음 경매로 넘어갑니다. auctionId={}", auctionId, e);
@@ -73,7 +66,7 @@ public class AuctionSettlementScheduler {
         }
     }
 
-    /** B단계 — CLOSED이고 winner_id가 NULL인 경매의 낙찰자를 확정하고 결제 이벤트를 발행한다. */
+    /** B단계 — CLOSED이고 winner_id가 NULL인 경매의 낙찰자를 확정한다. */
     private void settleClosedAuctions() {
         List<SettlementTarget> targets = settlementService.findSettlementTargets(settlementBatchSize);
         for (int i = 0; i < targets.size(); i++) {
@@ -114,11 +107,9 @@ public class AuctionSettlementScheduler {
         }
         Long winnerId = winningBid.getBidderId();
 
-        // 2. 낙찰자 DB 기록 + AuctionWonEvent 발행. 결제는 payment-service가 비동기로 처리한다.
-        String idempotencyKey = auctionId + "-" + winnerId + "-" + target.getReassignmentCount();
+        // 2. 낙찰자 DB 기록 + AuctionWonEvent outbox 기록 (한 트랜잭션).
         settlementService.assignWinnerForPayment(auctionId, winnerId, winningBid.getAmount());
-        eventProducer.publishWon(auctionId, winnerId, winningBid.getAmount(), idempotencyKey);
-        log.info("낙찰 확정 및 결제 요청 이벤트 발행. auctionId={}, winnerId={}", auctionId, winnerId);
+        log.info("낙찰 확정 및 이벤트 outbox 기록. auctionId={}, winnerId={}", auctionId, winnerId);
     }
 
     /**

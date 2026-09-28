@@ -19,7 +19,6 @@ import java.time.LocalDateTime;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -33,9 +32,6 @@ class PaymentEventConsumerTest {
 
     @Mock
     private BidGrpcClient bidGrpcClient;
-
-    @Mock
-    private AuctionEventProducer eventProducer;
 
     @InjectMocks
     private PaymentEventConsumer consumer;
@@ -64,7 +60,7 @@ class PaymentEventConsumerTest {
     // ---------- PaymentFailed — 차순위 승계 ----------
 
     @Test
-    @DisplayName("결제 실패 시 차순위 입찰자가 있으면 재지정하고 WinnerReassignedEvent를 발행한다")
+    @DisplayName("결제 실패 시 차순위 입찰자가 있으면 재지정한다 (outbox는 서비스 내부에서 기록)")
     void handlePaymentFailed_reassignsToNextBidder() {
         PaymentFailedEvent event = new PaymentFailedEvent(
                 "evt-3", LocalDateTime.now(), 100L, 900L, 77L, "SIMULATED_FAILURE");
@@ -80,7 +76,6 @@ class PaymentEventConsumerTest {
         consumer.handlePaymentFailed(event);
 
         verify(settlementService).reassignWinner(100L, 88L, new BigDecimal("12000.00"));
-        verify(eventProducer).publishReassigned(eq(100L), eq(88L), eq(new BigDecimal("12000.00")), eq("100-88-1"));
     }
 
     @Test
@@ -95,7 +90,6 @@ class PaymentEventConsumerTest {
         consumer.handlePaymentFailed(event);
 
         verify(settlementService).failAfterAllBiddersExhausted(100L);
-        verify(eventProducer, never()).publishReassigned(anyLong(), anyLong(), any(), any());
     }
 
     @Test
