@@ -37,6 +37,13 @@ CREATE TABLE IF NOT EXISTS outbox (
     INDEX idx_outbox_published_created_at (published, created_at)
 );
 
+-- 멱등 컨슈머: 처리 완료 이벤트 기록
+CREATE TABLE IF NOT EXISTS processed_event (
+    event_id VARCHAR(64) PRIMARY KEY,
+    handler_name VARCHAR(100) NOT NULL,
+    processed_at DATETIME(6) NOT NULL
+);
+
 -- ShedLock 분산 락 테이블 (스케줄러 다중 인스턴스 중복 실행 방지)
 CREATE TABLE IF NOT EXISTS shedlock (
     name VARCHAR(64) NOT NULL,

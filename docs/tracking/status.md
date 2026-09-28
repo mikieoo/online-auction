@@ -130,8 +130,21 @@
   - OutboxPublisher: JSON 직렬화 → outbox 저장 → 폴러가 역직렬화 후 KafkaTemplate으로 전송(type header 유지) → at-least-once 보장.
 - 검증 상태: 단위 테스트 223개(auction 74, bid 79, payment 42, gateway 28) 통과. `./gradlew clean build` 통과.
 
+## 완료 (D12)
+
+- 멱등 컨슈머(Idempotent Consumer): eventId 기반 중복 처리 차단.
+  - auction_db에 `processed_event` 테이블 추가 (event_id PK).
+  - `ProcessedEvent` 엔티티, `ProcessedEventRepository`, `IdempotentHandler` 신규.
+  - `IdempotentHandler.processOnce()`: processed_event INSERT + 비즈니스 로직을 한 트랜잭션에서 실행. UNIQUE 위반(동시 처리) 시 false 반환.
+  - `IdempotentHandler.isAlreadyProcessed()`: gRPC 등 외부 호출 전 사전 체크.
+  - `PaymentEventConsumer` 수정:
+    - `handlePaymentCompleted`: `processOnce()`로 감싸 중복 건너뜀.
+    - `handlePaymentFailed`: 사전 체크(`isAlreadyProcessed`) → gRPC → `processOnce()`로 DB 쓰기. 가장 위험했던 차순위 승계 중복 호출 방어.
+  - payment-service는 변경 없음 — idempotencyKey UNIQUE 제약으로 이미 멱등.
+- 검증 상태: 단위 테스트 231개(auction 82 (+8), bid 79, payment 42, gateway 28) 통과. `./gradlew clean build` 통과.
+
 ## 남은 범위
-- **D12~D13:** 멱등 컨슈머, Retry/DLQ
+- **D13:** Retry/DLQ
 - **D14~D21:** CQRS, Event Sourcing(선택), K8s 배포, Terraform 심화
 - **D22~D30:** 관측성, CD 완성, 부하 테스트, 문서화
 
