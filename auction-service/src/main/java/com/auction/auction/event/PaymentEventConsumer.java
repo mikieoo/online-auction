@@ -20,8 +20,8 @@ import org.springframework.stereotype.Component;
  *   <li>PaymentFailedEvent → 차순위 승계 또는 유찰 처리</li>
  * </ul>
  *
- * <p><b>D11 Outbox:</b> WinnerReassignedEvent는 reassignWinner() 트랜잭션 안에서
- * outbox 테이블에 기록된다. 이 컨슈머는 더 이상 Kafka로 직접 발행하지 않는다.
+ * <p><b>D12 멱등 컨슈머:</b> {@link IdempotentHandler}로 eventId 기반 중복 처리를 차단한다.
+ * processed_event INSERT와 비즈니스 로직이 한 트랜잭션에서 실행되어 원자적이다.
  */
 @Component
 @KafkaListener(topics = "payment-events", groupId = "${spring.kafka.consumer.group-id}")
@@ -31,11 +31,14 @@ public class PaymentEventConsumer {
 
     private final AuctionSettlementService settlementService;
     private final BidGrpcClient bidGrpcClient;
+    private final IdempotentHandler idempotentHandler;
 
     public PaymentEventConsumer(AuctionSettlementService settlementService,
-                                BidGrpcClient bidGrpcClient) {
+                                BidGrpcClient bidGrpcClient,
+                                IdempotentHandler idempotentHandler) {
         this.settlementService = settlementService;
         this.bidGrpcClient = bidGrpcClient;
+        this.idempotentHandler = idempotentHandler;
     }
 
     @KafkaHandler
@@ -43,8 +46,12 @@ public class PaymentEventConsumer {
         log.info("결제 완료 이벤트 수신. eventId={}, auctionId={}, paymentId={}",
                 event.getEventId(), event.getAuctionId(), event.getPaymentId());
         try {
-            settlementService.completeAuction(event.getAuctionId());
-            log.info("경매 정산 완료(COMPLETED). auctionId={}", event.getAuctionId());
+            boolean processed = idempotentHandler.processOnce(
+                    event.getEventId(), "PaymentCompleted",
+                    () -> settlementService.completeAuction(event.getAuctionId()));
+            if (!processed) {
+                log.info("이미 처리된 이벤트, 건너뜀. eventId={}", event.getEventId());
+            }
         } catch (RuntimeException e) {
             log.error("경매 완료 처리 실패. auctionId={}", event.getAuctionId(), e);
         }
@@ -54,27 +61,43 @@ public class PaymentEventConsumer {
     public void handlePaymentFailed(PaymentFailedEvent event) {
         log.info("결제 실패 이벤트 수신. eventId={}, auctionId={}, failedPayerId={}, reason={}",
                 event.getEventId(), event.getAuctionId(), event.getFailedPayerId(), event.getReason());
+
+        // 사전 체크: gRPC 호출 전에 이미 처리된 이벤트를 걸러낸다
+        if (idempotentHandler.isAlreadyProcessed(event.getEventId())) {
+            log.info("이미 처리된 이벤트, 건너뜀. eventId={}", event.getEventId());
+            return;
+        }
+
         try {
             Long auctionId = event.getAuctionId();
             Long failedPayerId = event.getFailedPayerId();
 
-            // 1. bid-service: 실패 입찰자 DISQUALIFIED + 차순위 확인
+            // 1. bid-service gRPC: 실패 입찰자 DISQUALIFIED + 차순위 확인 (트랜잭션 밖)
             WinnerResponse next = bidGrpcClient.reassignWinner(auctionId, failedPayerId);
 
+            // 2. DB 쓰기: processed_event INSERT + 비즈니스 로직 (한 트랜잭션)
             if (!next.isHasBids()) {
-                // 차순위 없음 → 유찰
-                settlementService.failAfterAllBiddersExhausted(auctionId);
-                log.info("차순위 입찰자 없음, 유찰 처리. auctionId={}", auctionId);
-                return;
+                boolean processed = idempotentHandler.processOnce(
+                        event.getEventId(), "PaymentFailed",
+                        () -> settlementService.failAfterAllBiddersExhausted(auctionId));
+                if (processed) {
+                    log.info("차순위 입찰자 없음, 유찰 처리. auctionId={}", auctionId);
+                }
+            } else {
+                WinningBidResponse winningBid = next.getWinningBid();
+                Long newWinnerId = winningBid.getBidderId();
+                boolean processed = idempotentHandler.processOnce(
+                        event.getEventId(), "PaymentFailed",
+                        () -> {
+                            int count = settlementService.reassignWinner(
+                                    auctionId, newWinnerId, winningBid.getAmount());
+                            log.info("차순위 승계 완료. auctionId={}, newWinnerId={}, reassignmentCount={}",
+                                    auctionId, newWinnerId, count);
+                        });
+                if (!processed) {
+                    log.info("이미 처리된 이벤트, 건너뜀. eventId={}", event.getEventId());
+                }
             }
-
-            // 2. 차순위 낙찰자 지정 + WinnerReassignedEvent outbox 기록 (한 트랜잭션)
-            WinningBidResponse winningBid = next.getWinningBid();
-            Long newWinnerId = winningBid.getBidderId();
-            int reassignmentCount = settlementService.reassignWinner(
-                    auctionId, newWinnerId, winningBid.getAmount());
-            log.info("차순위 승계 완료. auctionId={}, newWinnerId={}, reassignmentCount={}",
-                    auctionId, newWinnerId, reassignmentCount);
         } catch (RuntimeException e) {
             log.error("차순위 승계 처리 실패. auctionId={}", event.getAuctionId(), e);
         }
