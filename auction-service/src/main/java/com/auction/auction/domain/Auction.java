@@ -105,6 +105,23 @@ public class Auction {
         this.updatedAt = LocalDateTime.now();
     }
 
+    /**
+     * 결제 실패로 낙찰자를 재지정할 때 호출. winnerId·winningPrice를 초기화하고
+     * reassignmentCount를 올려 CLOSED + winnerId NULL 상태로 되돌린다.
+     * 스케줄러의 B단계 대상(CLOSED + winnerId NULL)에 다시 들어가지는 않고,
+     * PaymentEventConsumer가 곧바로 새 낙찰자를 지정한다.
+     */
+    public void resetForReassignment() {
+        if (this.status != AuctionStatus.CLOSED) {
+            throw new IllegalStateException(
+                    "낙찰자 재지정은 마감(CLOSED) 상태에서만 가능합니다. 현재 상태: " + this.status);
+        }
+        this.winnerId = null;
+        this.winningPrice = null;
+        this.reassignmentCount++;
+        this.updatedAt = LocalDateTime.now();
+    }
+
     public void incrementReassignmentCount() {
         this.reassignmentCount++;
         this.updatedAt = LocalDateTime.now();

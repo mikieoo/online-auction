@@ -344,6 +344,86 @@ class BidServiceTest {
     }
 
     @Nested
+    @DisplayName("차순위 승계")
+    class ReassignWinner {
+
+        private static final Long FAILED_BIDDER_ID = BIDDER_ID;
+        private static final Long NEXT_BIDDER_ID = 3L;
+
+        @Test
+        @DisplayName("WINNER를 DISQUALIFIED로 내리고 최고가 OUTBID를 WINNER로 승격한다")
+        void disqualifiesAndPromotesNext() {
+            Bid winner = new Bid(AUCTION_ID, FAILED_BIDDER_ID, new BigDecimal("30000"));
+            winner.markWinner();
+            Bid outbid = new Bid(AUCTION_ID, NEXT_BIDDER_ID, new BigDecimal("20000"));
+            outbid.markOutbid();
+
+            when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.WINNER)).thenReturn(Optional.of(winner));
+            when(bidRepository.findFirstByAuctionIdAndStatusOrderByAmountDesc(AUCTION_ID, BidStatus.OUTBID))
+                    .thenReturn(Optional.of(outbid));
+            stubSaveReturnsArgument();
+
+            WinnerResponse response = bidService.reassignWinner(AUCTION_ID, FAILED_BIDDER_ID);
+
+            assertThat(winner.getStatus()).isEqualTo(BidStatus.DISQUALIFIED);
+            assertThat(outbid.getStatus()).isEqualTo(BidStatus.WINNER);
+            assertThat(response.isHasBids()).isTrue();
+            assertThat(response.getWinningBid().getBidderId()).isEqualTo(NEXT_BIDDER_ID);
+            verify(bidRepository, times(2)).save(any());
+        }
+
+        @Test
+        @DisplayName("차순위 OUTBID가 없으면 hasBids=false를 반환한다")
+        void noNextBidder() {
+            Bid winner = new Bid(AUCTION_ID, FAILED_BIDDER_ID, new BigDecimal("30000"));
+            winner.markWinner();
+
+            when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.WINNER)).thenReturn(Optional.of(winner));
+            when(bidRepository.findFirstByAuctionIdAndStatusOrderByAmountDesc(AUCTION_ID, BidStatus.OUTBID))
+                    .thenReturn(Optional.empty());
+            stubSaveReturnsArgument();
+
+            WinnerResponse response = bidService.reassignWinner(AUCTION_ID, FAILED_BIDDER_ID);
+
+            assertThat(winner.getStatus()).isEqualTo(BidStatus.DISQUALIFIED);
+            assertThat(response.isHasBids()).isFalse();
+            assertThat(response.getWinningBid()).isNull();
+        }
+
+        @Test
+        @DisplayName("이미 다른 WINNER가 지정되어 있으면 그대로 반환한다 (멱등)")
+        void alreadyReassigned() {
+            Bid newWinner = new Bid(AUCTION_ID, NEXT_BIDDER_ID, new BigDecimal("20000"));
+            newWinner.markWinner();
+
+            when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.WINNER)).thenReturn(Optional.of(newWinner));
+
+            WinnerResponse response = bidService.reassignWinner(AUCTION_ID, FAILED_BIDDER_ID);
+
+            assertThat(response.isHasBids()).isTrue();
+            assertThat(response.getWinningBid().getBidderId()).isEqualTo(NEXT_BIDDER_ID);
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("WINNER가 없어도(이미 DISQUALIFIED) 차순위를 찾아 승격한다")
+        void noCurrentWinnerStillFindsNext() {
+            Bid outbid = new Bid(AUCTION_ID, NEXT_BIDDER_ID, new BigDecimal("20000"));
+            outbid.markOutbid();
+
+            when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.WINNER)).thenReturn(Optional.empty());
+            when(bidRepository.findFirstByAuctionIdAndStatusOrderByAmountDesc(AUCTION_ID, BidStatus.OUTBID))
+                    .thenReturn(Optional.of(outbid));
+            stubSaveReturnsArgument();
+
+            WinnerResponse response = bidService.reassignWinner(AUCTION_ID, FAILED_BIDDER_ID);
+
+            assertThat(outbid.getStatus()).isEqualTo(BidStatus.WINNER);
+            assertThat(response.isHasBids()).isTrue();
+        }
+    }
+
+    @Nested
     @DisplayName("조회")
     class Queries {
 

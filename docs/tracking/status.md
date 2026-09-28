@@ -109,9 +109,17 @@
   - idempotencyKey: `{auctionId}-{winnerId}-{reassignmentCount}` — 재지정마다 별도 결제.
 - 검증 상태: 단위 테스트 220개(auction 76, bid 72, payment 44 (+7), gateway 28) 통과. `./gradlew clean build` 통과.
 
+## 완료 (D10)
+
+- 차순위 승계: 결제 실패 시 다음 최고가 입찰자에게 자동 재지정.
+  - bid-service: `DISQUALIFIED` 상태 추가, `reassignWinner()` — WINNER→DISQUALIFIED + 최고가 OUTBID→WINNER. `ReassignWinner` gRPC RPC 추가. `markWinner()` OUTBID 허용(승격).
+  - auction-service: `PaymentEventConsumer.handlePaymentFailed()` — bid-service gRPC 호출 → 차순위 있으면 `reassignWinner()`+`WinnerReassignedEvent` 발행, 없으면 `failAfterAllBiddersExhausted()`→FAILED.
+  - payment-service: `AuctionWonEventConsumer`에 `handleWinnerReassigned()` 추가 — WinnerReassignedEvent 수신 시 결제 처리.
+  - 연쇄 승계: 각 실패마다 DISQUALIFIED로 영구 제외, OUTBID가 고갈되면 FAILED.
+- 검증 상태: 단위 테스트 235개(auction 81 (+5), bid 79 (+7), payment 47 (+3), gateway 28) 통과. `./gradlew clean build` 통과.
+
 ## 남은 범위
 
-- **D10:** 차순위 승계 — PaymentFailed → WinnerReassignedEvent, 다음 입찰자 자동 승계
 - **D11:** Outbox 패턴 — DB 트랜잭션과 이벤트 발행의 원자성 보장
 - **D12~D13:** 멱등 컨슈머, Retry/DLQ
 - **D14~D21:** CQRS, Event Sourcing(선택), K8s 배포, Terraform 심화

@@ -4,6 +4,7 @@ import com.auction.auction.dto.AuctionResponse;
 import com.auction.common.event.AuctionClosedEvent;
 import com.auction.common.event.AuctionStartedEvent;
 import com.auction.common.event.AuctionWonEvent;
+import com.auction.common.event.WinnerReassignedEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -53,6 +54,19 @@ public class AuctionEventProducer {
                 idempotencyKey
         );
         send(auctionId, event, "AuctionWonEvent");
+    }
+
+    public void publishReassigned(Long auctionId, Long newWinnerId, java.math.BigDecimal newWinningPrice,
+                                   String idempotencyKey) {
+        WinnerReassignedEvent event = new WinnerReassignedEvent(
+                UUID.randomUUID().toString(),
+                LocalDateTime.now(),
+                auctionId,
+                newWinnerId,
+                newWinningPrice,
+                idempotencyKey
+        );
+        send(auctionId, event, "WinnerReassignedEvent");
     }
 
     public void publishClosed(Long auctionId) {

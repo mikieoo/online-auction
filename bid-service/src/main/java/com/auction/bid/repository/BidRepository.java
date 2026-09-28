@@ -15,4 +15,7 @@ public interface BidRepository extends JpaRepository<Bid, Long> {
      * 한 경매에 ACTIVE(또는 WINNER) Bid는 최대 1개라는 불변 조건 위에서 동작한다.
      */
     Optional<Bid> findByAuctionIdAndStatus(Long auctionId, BidStatus status);
+
+    /** 차순위 승계: 해당 경매의 OUTBID 입찰 중 금액이 가장 높은 것을 찾는다. */
+    Optional<Bid> findFirstByAuctionIdAndStatusOrderByAmountDesc(Long auctionId, BidStatus status);
 }

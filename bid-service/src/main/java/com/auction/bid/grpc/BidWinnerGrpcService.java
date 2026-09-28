@@ -6,6 +6,7 @@ import com.auction.bid.service.BidService;
 import com.auction.common.grpc.BidWinnerServiceGrpc;
 import com.auction.common.grpc.ConfirmWinnerRequest;
 import com.auction.common.grpc.ConfirmWinnerResponse;
+import com.auction.common.grpc.ReassignWinnerRequest;
 import com.auction.common.grpc.WinningBid;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
@@ -34,29 +35,47 @@ public class BidWinnerGrpcService extends BidWinnerServiceGrpc.BidWinnerServiceI
                               StreamObserver<ConfirmWinnerResponse> responseObserver) {
         try {
             WinnerResponse result = bidService.confirmWinner(request.getAuctionId());
-
-            ConfirmWinnerResponse.Builder builder = ConfirmWinnerResponse.newBuilder()
-                    .setAuctionId(result.getAuctionId())
-                    .setHasBids(result.isHasBids());
-
-            if (result.isHasBids() && result.getWinningBid() != null) {
-                BidResponse bid = result.getWinningBid();
-                WinningBid.Builder bidBuilder = WinningBid.newBuilder()
-                        .setBidderId(bid.getBidderId())
-                        .setAmount(bid.getAmount().toPlainString())
-                        .setStatus(bid.getStatus().name());
-                if (bid.getBidId() != null) bidBuilder.setBidId(bid.getBidId());
-                if (bid.getAuctionId() != null) bidBuilder.setAuctionId(bid.getAuctionId());
-                if (bid.getCreatedAt() != null) bidBuilder.setCreatedAt(bid.getCreatedAt().toString());
-                builder.setWinningBid(bidBuilder.build());
-            }
-
-            responseObserver.onNext(builder.build());
+            responseObserver.onNext(toGrpcResponse(result));
             responseObserver.onCompleted();
         } catch (Exception e) {
             log.error("gRPC confirmWinner 처리 실패. auctionId={}", request.getAuctionId(), e);
             responseObserver.onError(
                     Status.INTERNAL.withDescription(e.getMessage()).withCause(e).asRuntimeException());
         }
+    }
+
+    @Override
+    public void reassignWinner(ReassignWinnerRequest request,
+                               StreamObserver<ConfirmWinnerResponse> responseObserver) {
+        try {
+            WinnerResponse result = bidService.reassignWinner(
+                    request.getAuctionId(), request.getFailedBidderId());
+            responseObserver.onNext(toGrpcResponse(result));
+            responseObserver.onCompleted();
+        } catch (Exception e) {
+            log.error("gRPC reassignWinner 처리 실패. auctionId={}, failedBidderId={}",
+                    request.getAuctionId(), request.getFailedBidderId(), e);
+            responseObserver.onError(
+                    Status.INTERNAL.withDescription(e.getMessage()).withCause(e).asRuntimeException());
+        }
+    }
+
+    private static ConfirmWinnerResponse toGrpcResponse(WinnerResponse result) {
+        ConfirmWinnerResponse.Builder builder = ConfirmWinnerResponse.newBuilder()
+                .setAuctionId(result.getAuctionId())
+                .setHasBids(result.isHasBids());
+
+        if (result.isHasBids() && result.getWinningBid() != null) {
+            BidResponse bid = result.getWinningBid();
+            WinningBid.Builder bidBuilder = WinningBid.newBuilder()
+                    .setBidderId(bid.getBidderId())
+                    .setAmount(bid.getAmount().toPlainString())
+                    .setStatus(bid.getStatus().name());
+            if (bid.getBidId() != null) bidBuilder.setBidId(bid.getBidId());
+            if (bid.getAuctionId() != null) bidBuilder.setAuctionId(bid.getAuctionId());
+            if (bid.getCreatedAt() != null) bidBuilder.setCreatedAt(bid.getCreatedAt().toString());
+            builder.setWinningBid(bidBuilder.build());
+        }
+        return builder.build();
     }
 }
