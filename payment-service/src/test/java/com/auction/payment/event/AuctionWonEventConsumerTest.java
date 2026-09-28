@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -65,11 +66,13 @@ class AuctionWonEventConsumerTest {
     }
 
     @Test
-    @DisplayName("PaymentService 예외 발생 시 전파되지 않는다")
-    void handleAuctionWon_exceptionSwallowed() {
+    @DisplayName("PaymentService 예외 발생 시 전파된다 (DefaultErrorHandler 재시도/DLQ)")
+    void handleAuctionWon_exceptionPropagated() {
         when(paymentService.process(any())).thenThrow(new RuntimeException("DB error"));
 
-        assertThatCode(() -> consumer.handleAuctionWon(sampleEvent())).doesNotThrowAnyException();
+        assertThatThrownBy(() -> consumer.handleAuctionWon(sampleEvent()))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("DB error");
     }
 
     // ---------- WinnerReassignedEvent ----------
@@ -97,13 +100,15 @@ class AuctionWonEventConsumerTest {
     }
 
     @Test
-    @DisplayName("차순위 결제 처리 중 예외가 발생해도 전파되지 않는다")
-    void handleWinnerReassigned_exceptionSwallowed() {
+    @DisplayName("차순위 결제 처리 중 예외가 발생하면 전파된다 (DefaultErrorHandler 재시도/DLQ)")
+    void handleWinnerReassigned_exceptionPropagated() {
         WinnerReassignedEvent event = new WinnerReassignedEvent(
                 "evt-r3", LocalDateTime.now(), 100L, 88L, new BigDecimal("12000.00"), "100-88-1");
         when(paymentService.process(any())).thenThrow(new RuntimeException("DB error"));
 
-        assertThatCode(() -> consumer.handleWinnerReassigned(event)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> consumer.handleWinnerReassigned(event))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("DB error");
     }
 
     // ---------- 알 수 없는 이벤트 ----------

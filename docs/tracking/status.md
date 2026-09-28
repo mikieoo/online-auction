@@ -143,8 +143,18 @@
   - payment-service는 변경 없음 — idempotencyKey UNIQUE 제약으로 이미 멱등.
 - 검증 상태: 단위 테스트 231개(auction 82 (+8), bid 79, payment 42, gateway 28) 통과. `./gradlew clean build` 통과.
 
+## 완료 (D13)
+
+- Retry/DLQ: Spring Kafka `DefaultErrorHandler` + `DeadLetterPublishingRecoverer`로 재시도/DLQ 체계 구축.
+  - auction-service·payment-service 양쪽에 `KafkaConsumerConfig` 추가.
+  - `DefaultErrorHandler`: `FixedBackOff(1000L, 2)` — 1초 간격, 최대 2회 재시도(총 3회 시도).
+  - `DeadLetterPublishingRecoverer`: 재시도 소진 후 `<원본토픽>.DLT` 토픽으로 실패 메시지 발행.
+  - `DeserializationException`은 재시도 없이 즉시 DLQ 전송.
+  - 컨슈머 try-catch 제거: `PaymentEventConsumer`, `AuctionWonEventConsumer`에서 예외를 삼키지 않고 전파 → `DefaultErrorHandler`가 재시도/DLQ 처리.
+  - `DefaultErrorHandler` 선택 이유: auctionId 파티션 키 기반 순서 보장이 필요하므로 같은 파티션 내에서 재시도하는 방식 선택 (`@RetryableTopic`은 별도 토픽으로 보내 순서 깨짐).
+- 검증 상태: 단위 테스트 231개(auction 82, bid 79, payment 42, gateway 28) 통과. `./gradlew clean build` 통과.
+
 ## 남은 범위
-- **D13:** Retry/DLQ
 - **D14~D21:** CQRS, Event Sourcing(선택), K8s 배포, Terraform 심화
 - **D22~D30:** 관측성, CD 완성, 부하 테스트, 문서화
 

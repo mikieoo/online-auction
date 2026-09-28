@@ -14,12 +14,11 @@ import org.springframework.stereotype.Component;
 /**
  * auction-events 토픽에서 AuctionWonEvent/WinnerReassignedEvent를 수신해 결제를 처리한다.
  *
- * <p><b>D11 Outbox:</b> 결제 결과 이벤트(PaymentCompleted/FailedEvent)는
- * PaymentTransactionService의 트랜잭션 안에서 outbox 테이블에 기록된다.
- * 이 컨슈머는 더 이상 Kafka로 직접 발행하지 않는다.
- *
  * <p>멱등: idempotencyKey가 PaymentService.process()의 멱등 키이므로
  * 동일 이벤트를 여러 번 받아도 같은 Payment를 반환한다.
+ *
+ * <p><b>D13 Retry/DLQ:</b> 예외를 삼키지 않고 전파하여
+ * {@link org.springframework.kafka.listener.DefaultErrorHandler}가 재시도/DLQ 처리한다.
  */
 @Component
 @KafkaListener(topics = "auction-events", groupId = "${spring.kafka.consumer.group-id}")
@@ -37,41 +36,34 @@ public class AuctionWonEventConsumer {
     public void handleAuctionWon(AuctionWonEvent event) {
         log.info("낙찰 이벤트 수신. eventId={}, auctionId={}, winnerId={}, amount={}",
                 event.getEventId(), event.getAuctionId(), event.getWinnerId(), event.getWinningPrice());
-        try {
-            PaymentRequest request = new PaymentRequest();
-            request.setAuctionId(event.getAuctionId());
-            request.setPayerId(event.getWinnerId());
-            request.setAmount(event.getWinningPrice());
-            request.setIdempotencyKey(event.getIdempotencyKey());
 
-            PaymentProcessResult result = paymentService.process(request);
-            log.info("결제 처리 완료. auctionId={}, paymentId={}, status={}",
-                    event.getAuctionId(), result.getPayment().getPaymentId(),
-                    result.getPayment().getStatus());
-        } catch (RuntimeException e) {
-            log.error("결제 처리 실패. auctionId={}, winnerId={}", event.getAuctionId(), event.getWinnerId(), e);
-        }
+        PaymentRequest request = new PaymentRequest();
+        request.setAuctionId(event.getAuctionId());
+        request.setPayerId(event.getWinnerId());
+        request.setAmount(event.getWinningPrice());
+        request.setIdempotencyKey(event.getIdempotencyKey());
+
+        PaymentProcessResult result = paymentService.process(request);
+        log.info("결제 처리 완료. auctionId={}, paymentId={}, status={}",
+                event.getAuctionId(), result.getPayment().getPaymentId(),
+                result.getPayment().getStatus());
     }
 
     @KafkaHandler
     public void handleWinnerReassigned(WinnerReassignedEvent event) {
         log.info("차순위 승계 이벤트 수신. eventId={}, auctionId={}, newWinnerId={}, amount={}",
                 event.getEventId(), event.getAuctionId(), event.getNewWinnerId(), event.getNewWinningPrice());
-        try {
-            PaymentRequest request = new PaymentRequest();
-            request.setAuctionId(event.getAuctionId());
-            request.setPayerId(event.getNewWinnerId());
-            request.setAmount(event.getNewWinningPrice());
-            request.setIdempotencyKey(event.getIdempotencyKey());
 
-            PaymentProcessResult result = paymentService.process(request);
-            log.info("차순위 결제 처리 완료. auctionId={}, paymentId={}, status={}",
-                    event.getAuctionId(), result.getPayment().getPaymentId(),
-                    result.getPayment().getStatus());
-        } catch (RuntimeException e) {
-            log.error("차순위 결제 처리 실패. auctionId={}, newWinnerId={}",
-                    event.getAuctionId(), event.getNewWinnerId(), e);
-        }
+        PaymentRequest request = new PaymentRequest();
+        request.setAuctionId(event.getAuctionId());
+        request.setPayerId(event.getNewWinnerId());
+        request.setAmount(event.getNewWinningPrice());
+        request.setIdempotencyKey(event.getIdempotencyKey());
+
+        PaymentProcessResult result = paymentService.process(request);
+        log.info("차순위 결제 처리 완료. auctionId={}, paymentId={}, status={}",
+                event.getAuctionId(), result.getPayment().getPaymentId(),
+                result.getPayment().getStatus());
     }
 
     @KafkaHandler(isDefault = true)

@@ -17,6 +17,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -78,13 +79,15 @@ class PaymentEventConsumerTest {
     }
 
     @Test
-    @DisplayName("PaymentCompletedEvent 처리 중 예외가 발생해도 전파되지 않는다")
-    void handlePaymentCompleted_exceptionSwallowed() {
+    @DisplayName("PaymentCompletedEvent 처리 중 예외가 발생하면 전파된다 (DefaultErrorHandler 재시도/DLQ)")
+    void handlePaymentCompleted_exceptionPropagated() {
         when(idempotentHandler.processOnce(anyString(), anyString(), any(Runnable.class)))
                 .thenThrow(new RuntimeException("DB error"));
         PaymentCompletedEvent event = new PaymentCompletedEvent("evt-2", LocalDateTime.now(), 100L, 900L);
 
-        assertThatCode(() -> consumer.handlePaymentCompleted(event)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> consumer.handlePaymentCompleted(event))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("DB error");
     }
 
     // ---------- PaymentFailed — 차순위 승계 ----------
@@ -161,8 +164,8 @@ class PaymentEventConsumerTest {
     }
 
     @Test
-    @DisplayName("차순위 승계 중 예외가 발생해도 전파되지 않는다")
-    void handlePaymentFailed_exceptionSwallowed() {
+    @DisplayName("차순위 승계 중 예외가 발생하면 전파된다 (DefaultErrorHandler 재시도/DLQ)")
+    void handlePaymentFailed_exceptionPropagated() {
         when(idempotentHandler.isAlreadyProcessed("evt-5")).thenReturn(false);
 
         PaymentFailedEvent event = new PaymentFailedEvent(
@@ -170,7 +173,9 @@ class PaymentEventConsumerTest {
         when(bidGrpcClient.reassignWinner(100L, 77L))
                 .thenThrow(new RuntimeException("gRPC error"));
 
-        assertThatCode(() -> consumer.handlePaymentFailed(event)).doesNotThrowAnyException();
+        assertThatThrownBy(() -> consumer.handlePaymentFailed(event))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("gRPC error");
         verify(settlementService, never()).reassignWinner(anyLong(), anyLong(), any());
         verify(settlementService, never()).failAfterAllBiddersExhausted(anyLong());
     }
