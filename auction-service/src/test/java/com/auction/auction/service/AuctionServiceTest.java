@@ -5,6 +5,7 @@ import com.auction.auction.domain.AuctionStatus;
 import com.auction.auction.domain.Product;
 import com.auction.auction.dto.AuctionResponse;
 import com.auction.auction.dto.CreateAuctionRequest;
+import com.auction.auction.event.OutboxEventRecorder;
 import com.auction.auction.exception.AuctionServiceException;
 import com.auction.auction.exception.ConflictException;
 import com.auction.auction.exception.ForbiddenException;
@@ -46,13 +47,16 @@ class AuctionServiceTest {
     @Mock
     private ProductRepository productRepository;
 
+    @Mock
+    private OutboxEventRecorder outboxRecorder;
+
     private AuctionService auctionService;
 
     private Product product;
 
     @BeforeEach
     void setUp() {
-        auctionService = new AuctionService(auctionRepository, productRepository);
+        auctionService = new AuctionService(auctionRepository, productRepository, outboxRecorder);
         product = new Product(SELLER_ID, "노트북", "설명", new BigDecimal("50000.00"));
         ReflectionTestUtils.setField(product, "productId", PRODUCT_ID);
     }
@@ -133,7 +137,7 @@ class AuctionServiceTest {
     }
 
     @Test
-    @DisplayName("startAuction: 정상 시작 시 ACTIVE로 전이되고 sellerId/startingPrice가 응답에 포함된다")
+    @DisplayName("startAuction: 정상 시작 시 ACTIVE로 전이 + outbox에 AuctionStartedEvent 기록")
     void startAuction_success() {
         Auction auction = auctionWithEndTime(LocalDateTime.now().plusHours(1));
         when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
@@ -147,6 +151,7 @@ class AuctionServiceTest {
         assertThat(response.getAuctionId()).isEqualTo(AUCTION_ID);
         assertThat(response.getSellerId()).isEqualTo(SELLER_ID);
         assertThat(response.getStartingPrice()).isEqualByComparingTo("50000.00");
+        verify(outboxRecorder).record(any(), any(), any());
     }
 
     // ---------- createAuction ----------

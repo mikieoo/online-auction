@@ -3,8 +3,12 @@ package com.auction.auction.service;
 import com.auction.auction.domain.Auction;
 import com.auction.auction.domain.AuctionStatus;
 import com.auction.auction.dto.SettlementTarget;
+import com.auction.auction.event.OutboxEventRecorder;
 import com.auction.auction.exception.NotFoundException;
 import com.auction.auction.repository.AuctionRepository;
+import com.auction.common.event.AuctionClosedEvent;
+import com.auction.common.event.AuctionWonEvent;
+import com.auction.common.event.WinnerReassignedEvent;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -13,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 마감·정산의 DB 작업 단위. 메서드 하나 = 경매 한 건 = 트랜잭션 하나.
@@ -20,6 +25,10 @@ import java.util.List;
  * <p>스케줄러 빈({@code AuctionSettlementScheduler})·이벤트 컨슈머와 분리한 이유:
  * {@code @Transactional}은 프록시로 동작하므로 같은 빈 안에서 자기 메서드를 호출(self-invocation)하면
  * 트랜잭션이 걸리지 않는다.
+ *
+ * <p><b>D11 Outbox:</b> 이벤트를 Kafka로 직접 발행하지 않고, 같은 트랜잭션에서
+ * outbox 테이블에 기록한다. {@link com.auction.auction.event.OutboxPublisher}가
+ * 폴링하여 Kafka로 전달한다.
  *
  * <p><b>상태 인코딩</b> — status + winner_id 조합으로 정산 진행 단계를 표현한다:
  * <ul>
@@ -33,9 +42,12 @@ import java.util.List;
 public class AuctionSettlementService {
 
     private final AuctionRepository auctionRepository;
+    private final OutboxEventRecorder outboxRecorder;
 
-    public AuctionSettlementService(AuctionRepository auctionRepository) {
+    public AuctionSettlementService(AuctionRepository auctionRepository,
+                                     OutboxEventRecorder outboxRecorder) {
         this.auctionRepository = auctionRepository;
+        this.outboxRecorder = outboxRecorder;
     }
 
     /** A단계 대상: ACTIVE이면서 end_time이 현재 시각 이전인 경매 id. */
@@ -57,15 +69,19 @@ public class AuctionSettlementService {
                 .toList();
     }
 
-    /** A단계: ACTIVE → CLOSED. 외부 호출 없음. */
+    /** A단계: ACTIVE → CLOSED + AuctionClosedEvent outbox 기록. */
     @Transactional
     public void closeAuction(Long auctionId) {
         Auction auction = findAuction(auctionId);
         auction.close();
         auctionRepository.save(auction);
+
+        AuctionClosedEvent event = new AuctionClosedEvent(
+                UUID.randomUUID().toString(), LocalDateTime.now(), auctionId);
+        outboxRecorder.record("Auction", auctionId, event);
     }
 
-    /** B단계 유찰: hasBids=false → CLOSED → FAILED, winner_id는 NULL 유지. */
+    /** B단계 유찰: hasBids=false → CLOSED → FAILED, winner_id는 NULL 유지. 이벤트 없음. */
     @Transactional
     public void markNoBids(Long auctionId) {
         Auction auction = findAuction(auctionId);
@@ -74,20 +90,25 @@ public class AuctionSettlementService {
     }
 
     /**
-     * B단계 낙찰자 확정: winner_id를 기록하고 CLOSED를 유지한다.
+     * B단계 낙찰자 확정 + AuctionWonEvent outbox 기록.
      * winner_id가 채워져 다음 틱의 B단계 대상에서 빠진다.
-     * 호출 후 AuctionWonEvent를 발행하면 payment-service가 비동기로 결제를 처리한다.
      */
     @Transactional
     public void assignWinnerForPayment(Long auctionId, Long winnerId, BigDecimal amount) {
         Auction auction = findAuction(auctionId);
         auction.assignWinner(winnerId, amount);
         auctionRepository.save(auction);
+
+        String idempotencyKey = auctionId + "-" + winnerId + "-" + auction.getReassignmentCount();
+        AuctionWonEvent event = new AuctionWonEvent(
+                UUID.randomUUID().toString(), LocalDateTime.now(),
+                auctionId, winnerId, amount, idempotencyKey);
+        outboxRecorder.record("Auction", auctionId, event);
     }
 
     /**
-     * 차순위 승계: 이전 낙찰자를 초기화하고 새 낙찰자를 한 트랜잭션에서 지정한다.
-     * @return 증가된 reassignmentCount (idempotencyKey 생성에 사용)
+     * 차순위 승계 + WinnerReassignedEvent outbox 기록.
+     * @return 증가된 reassignmentCount
      */
     @Transactional
     public int reassignWinner(Long auctionId, Long newWinnerId, BigDecimal amount) {
@@ -95,10 +116,18 @@ public class AuctionSettlementService {
         auction.resetForReassignment();
         auction.assignWinner(newWinnerId, amount);
         auctionRepository.save(auction);
-        return auction.getReassignmentCount();
+
+        int reassignmentCount = auction.getReassignmentCount();
+        String idempotencyKey = auctionId + "-" + newWinnerId + "-" + reassignmentCount;
+        WinnerReassignedEvent event = new WinnerReassignedEvent(
+                UUID.randomUUID().toString(), LocalDateTime.now(),
+                auctionId, newWinnerId, amount, idempotencyKey);
+        outboxRecorder.record("Auction", auctionId, event);
+
+        return reassignmentCount;
     }
 
-    /** 차순위 입찰자 없음: 이전 낙찰자를 초기화하고 FAILED(유찰)로 전이한다. */
+    /** 차순위 입찰자 없음: 이전 낙찰자를 초기화하고 FAILED(유찰)로 전이한다. 이벤트 없음. */
     @Transactional
     public void failAfterAllBiddersExhausted(Long auctionId) {
         Auction auction = findAuction(auctionId);

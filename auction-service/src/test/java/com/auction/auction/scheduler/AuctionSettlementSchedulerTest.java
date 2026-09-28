@@ -4,7 +4,6 @@ import com.auction.auction.client.BidGrpcClient;
 import com.auction.auction.client.WinnerResponse;
 import com.auction.auction.client.WinningBidResponse;
 import com.auction.auction.dto.SettlementTarget;
-import com.auction.auction.event.AuctionEventProducer;
 import com.auction.auction.service.AuctionSettlementService;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -49,14 +48,11 @@ class AuctionSettlementSchedulerTest {
     @Mock
     private BidGrpcClient bidGrpcClient;
 
-    @Mock
-    private AuctionEventProducer eventProducer;
-
     private AuctionSettlementScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new AuctionSettlementScheduler(settlementService, bidGrpcClient, eventProducer, BATCH_SIZE);
+        scheduler = new AuctionSettlementScheduler(settlementService, bidGrpcClient, BATCH_SIZE);
     }
 
     private static WinnerResponse winner(Long auctionId, Long bidderId, BigDecimal amount) {
@@ -105,29 +101,6 @@ class AuctionSettlementSchedulerTest {
         }
 
         @Test
-        @DisplayName("마감 성공 시 AuctionClosedEvent를 발행한다")
-        void closePublishesEvent() {
-            when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of(AUCTION_ID));
-            when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of());
-
-            scheduler.settle();
-
-            verify(eventProducer).publishClosed(AUCTION_ID);
-        }
-
-        @Test
-        @DisplayName("마감 실패 시 이벤트를 발행하지 않는다")
-        void closeFailureDoesNotPublishEvent() {
-            when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of(AUCTION_ID));
-            when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of());
-            doThrow(new IllegalStateException("마감 실패")).when(settlementService).closeAuction(AUCTION_ID);
-
-            scheduler.settle();
-
-            verify(eventProducer, never()).publishClosed(AUCTION_ID);
-        }
-
-        @Test
         @DisplayName("A단계는 B단계보다 먼저 실행되고 B단계 실패와 무관하게 완료된다")
         void closeStepRunsBeforeAndIndependentlyOfSettlement() {
             when(settlementService.findEndedActiveAuctionIds()).thenReturn(List.of(AUCTION_ID));
@@ -155,7 +128,7 @@ class AuctionSettlementSchedulerTest {
         }
 
         @Test
-        @DisplayName("hasBids=false → markNoBids(유찰 FAILED), 이벤트 발행 없음")
+        @DisplayName("hasBids=false → markNoBids(유찰 FAILED)")
         void noBidsMarksFailed() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
             when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(noBids(AUCTION_ID));
@@ -163,34 +136,21 @@ class AuctionSettlementSchedulerTest {
             scheduler.settle();
 
             verify(settlementService).markNoBids(AUCTION_ID);
-            verify(eventProducer, never()).publishWon(anyLong(), anyLong(), any(), any());
         }
 
         @Test
-        @DisplayName("낙찰자 있음 → assignWinnerForPayment + AuctionWonEvent 발행")
-        void winnerAssignedAndEventPublished() {
+        @DisplayName("낙찰자 있음 → assignWinnerForPayment 호출 (outbox는 서비스 내부에서 기록)")
+        void winnerAssigned() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
             when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
 
             scheduler.settle();
 
             verify(settlementService).assignWinnerForPayment(AUCTION_ID, BIDDER_ID, AMOUNT);
-            verify(eventProducer).publishWon(AUCTION_ID, BIDDER_ID, AMOUNT, "1-77-0");
         }
 
         @Test
-        @DisplayName("idempotencyKey는 auctionId-winnerId-reassignmentCount 형식이다")
-        void idempotencyKeyFormat() {
-            when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 2)));
-            when(bidGrpcClient.confirmWinner(AUCTION_ID)).thenReturn(winner(AUCTION_ID, BIDDER_ID, AMOUNT));
-
-            scheduler.settle();
-
-            verify(eventProducer).publishWon(AUCTION_ID, BIDDER_ID, AMOUNT, "1-77-2");
-        }
-
-        @Test
-        @DisplayName("bid-service gRPC 호출 실패(UNAVAILABLE) → 저장 없음, 이벤트 없음")
+        @DisplayName("bid-service gRPC 호출 실패(UNAVAILABLE) → 저장 없음")
         void bidClientFailureSavesNothing() {
             when(settlementService.findSettlementTargets(BATCH_SIZE)).thenReturn(List.of(target(AUCTION_ID, 0)));
             when(bidGrpcClient.confirmWinner(AUCTION_ID))
@@ -199,7 +159,6 @@ class AuctionSettlementSchedulerTest {
             scheduler.settle();
 
             verifyNoSettlementWrites();
-            verify(eventProducer, never()).publishWon(anyLong(), anyLong(), any(), any());
         }
 
         @Test

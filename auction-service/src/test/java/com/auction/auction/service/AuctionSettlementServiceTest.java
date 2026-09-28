@@ -3,6 +3,7 @@ package com.auction.auction.service;
 import com.auction.auction.domain.Auction;
 import com.auction.auction.domain.AuctionStatus;
 import com.auction.auction.dto.SettlementTarget;
+import com.auction.auction.event.OutboxEventRecorder;
 import com.auction.auction.exception.NotFoundException;
 import com.auction.auction.repository.AuctionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -23,6 +24,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -39,11 +41,14 @@ class AuctionSettlementServiceTest {
     @Mock
     private AuctionRepository auctionRepository;
 
+    @Mock
+    private OutboxEventRecorder outboxRecorder;
+
     private AuctionSettlementService service;
 
     @BeforeEach
     void setUp() {
-        service = new AuctionSettlementService(auctionRepository);
+        service = new AuctionSettlementService(auctionRepository, outboxRecorder);
     }
 
     private static Auction waitingAuction() {
@@ -103,7 +108,7 @@ class AuctionSettlementServiceTest {
     // ---------- closeAuction ----------
 
     @Test
-    @DisplayName("closeAuction: ACTIVE 경매를 CLOSED로 저장한다")
+    @DisplayName("closeAuction: ACTIVE 경매를 CLOSED로 저장하고 AuctionClosedEvent를 outbox에 기록한다")
     void closeAuction_activeBecomesClosed() {
         Auction auction = activeAuction();
         when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
@@ -112,6 +117,7 @@ class AuctionSettlementServiceTest {
 
         assertThat(auction.getStatus()).isEqualTo(AuctionStatus.CLOSED);
         verify(auctionRepository).save(auction);
+        verify(outboxRecorder).record(eq("Auction"), eq(AUCTION_ID), any());
     }
 
     @Test
@@ -124,6 +130,7 @@ class AuctionSettlementServiceTest {
                 .isInstanceOf(IllegalStateException.class);
         assertThat(auction.getStatus()).isEqualTo(AuctionStatus.WAITING);
         verify(auctionRepository, never()).save(any());
+        verify(outboxRecorder, never()).record(any(), anyLong(), any());
     }
 
     @Test
@@ -138,7 +145,7 @@ class AuctionSettlementServiceTest {
     // ---------- markNoBids ----------
 
     @Test
-    @DisplayName("markNoBids: CLOSED 경매를 FAILED(유찰)로 저장하고 winner는 비운 채 둔다")
+    @DisplayName("markNoBids: CLOSED 경매를 FAILED(유찰)로 저장하고 winner는 비운 채 둔다 — outbox 기록 없음")
     void markNoBids_closedBecomesFailed() {
         Auction auction = closedAuction();
         when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
@@ -148,6 +155,7 @@ class AuctionSettlementServiceTest {
         assertThat(auction.getStatus()).isEqualTo(AuctionStatus.FAILED);
         assertThat(auction.getWinnerId()).isNull();
         verify(auctionRepository).save(auction);
+        verify(outboxRecorder, never()).record(any(), anyLong(), any());
     }
 
     @Test
@@ -164,8 +172,8 @@ class AuctionSettlementServiceTest {
     // ---------- assignWinnerForPayment ----------
 
     @Test
-    @DisplayName("assignWinnerForPayment: winner·winningPrice를 저장하고 CLOSED를 유지한다")
-    void assignWinnerForPayment_assignsWinnerKeepsClosed() {
+    @DisplayName("assignWinnerForPayment: winner·winningPrice를 저장하고 AuctionWonEvent를 outbox에 기록한다")
+    void assignWinnerForPayment_assignsWinnerAndRecordsOutbox() {
         Auction auction = closedAuction();
         when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
 
@@ -175,6 +183,7 @@ class AuctionSettlementServiceTest {
         assertThat(auction.getWinnerId()).isEqualTo(WINNER_ID);
         assertThat(auction.getWinningPrice()).isEqualByComparingTo(PRICE);
         verify(auctionRepository).save(auction);
+        verify(outboxRecorder).record(eq("Auction"), eq(AUCTION_ID), any());
     }
 
     @Test
@@ -187,6 +196,7 @@ class AuctionSettlementServiceTest {
                 .isInstanceOf(IllegalStateException.class);
         assertThat(auction.getWinnerId()).isNull();
         verify(auctionRepository, never()).save(any());
+        verify(outboxRecorder, never()).record(any(), anyLong(), any());
     }
 
     // ---------- completeAuction ----------
@@ -230,8 +240,8 @@ class AuctionSettlementServiceTest {
     // ---------- reassignWinner ----------
 
     @Test
-    @DisplayName("reassignWinner: 이전 낙찰자 초기화 + 새 낙찰자 지정을 한 트랜잭션에서 수행한다")
-    void reassignWinner_resetsAndAssignsNew() {
+    @DisplayName("reassignWinner: 이전 낙찰자 초기화 + 새 낙찰자 지정 + WinnerReassignedEvent outbox 기록")
+    void reassignWinner_resetsAndAssignsNewAndRecordsOutbox() {
         Auction auction = closedAuction();
         auction.assignWinner(WINNER_ID, PRICE);
         when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
@@ -246,12 +256,13 @@ class AuctionSettlementServiceTest {
         assertThat(auction.getReassignmentCount()).isEqualTo(1);
         assertThat(count).isEqualTo(1);
         verify(auctionRepository).save(auction);
+        verify(outboxRecorder).record(eq("Auction"), eq(AUCTION_ID), any());
     }
 
     // ---------- failAfterAllBiddersExhausted ----------
 
     @Test
-    @DisplayName("failAfterAllBiddersExhausted: 이전 낙찰자 초기화 후 FAILED로 전이한다")
+    @DisplayName("failAfterAllBiddersExhausted: 이전 낙찰자 초기화 후 FAILED로 전이 — outbox 기록 없음")
     void failAfterAllBiddersExhausted_resetsAndFails() {
         Auction auction = closedAuction();
         auction.assignWinner(WINNER_ID, PRICE);
@@ -264,5 +275,6 @@ class AuctionSettlementServiceTest {
         assertThat(auction.getWinningPrice()).isNull();
         assertThat(auction.getReassignmentCount()).isEqualTo(1);
         verify(auctionRepository).save(auction);
+        verify(outboxRecorder, never()).record(any(), anyLong(), any());
     }
 }

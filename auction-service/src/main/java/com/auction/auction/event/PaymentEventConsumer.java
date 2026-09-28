@@ -19,6 +19,9 @@ import org.springframework.stereotype.Component;
  *   <li>PaymentCompletedEvent → 경매 COMPLETED 전이</li>
  *   <li>PaymentFailedEvent → 차순위 승계 또는 유찰 처리</li>
  * </ul>
+ *
+ * <p><b>D11 Outbox:</b> WinnerReassignedEvent는 reassignWinner() 트랜잭션 안에서
+ * outbox 테이블에 기록된다. 이 컨슈머는 더 이상 Kafka로 직접 발행하지 않는다.
  */
 @Component
 @KafkaListener(topics = "payment-events", groupId = "${spring.kafka.consumer.group-id}")
@@ -28,14 +31,11 @@ public class PaymentEventConsumer {
 
     private final AuctionSettlementService settlementService;
     private final BidGrpcClient bidGrpcClient;
-    private final AuctionEventProducer eventProducer;
 
     public PaymentEventConsumer(AuctionSettlementService settlementService,
-                                BidGrpcClient bidGrpcClient,
-                                AuctionEventProducer eventProducer) {
+                                BidGrpcClient bidGrpcClient) {
         this.settlementService = settlementService;
         this.bidGrpcClient = bidGrpcClient;
-        this.eventProducer = eventProducer;
     }
 
     @KafkaHandler
@@ -68,14 +68,11 @@ public class PaymentEventConsumer {
                 return;
             }
 
-            // 2. 차순위 낙찰자 지정 + WinnerReassignedEvent 발행
+            // 2. 차순위 낙찰자 지정 + WinnerReassignedEvent outbox 기록 (한 트랜잭션)
             WinningBidResponse winningBid = next.getWinningBid();
             Long newWinnerId = winningBid.getBidderId();
             int reassignmentCount = settlementService.reassignWinner(
                     auctionId, newWinnerId, winningBid.getAmount());
-
-            String idempotencyKey = auctionId + "-" + newWinnerId + "-" + reassignmentCount;
-            eventProducer.publishReassigned(auctionId, newWinnerId, winningBid.getAmount(), idempotencyKey);
             log.info("차순위 승계 완료. auctionId={}, newWinnerId={}, reassignmentCount={}",
                     auctionId, newWinnerId, reassignmentCount);
         } catch (RuntimeException e) {

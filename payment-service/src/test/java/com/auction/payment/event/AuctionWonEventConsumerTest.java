@@ -3,12 +3,12 @@ package com.auction.payment.event;
 import com.auction.common.event.AuctionWonEvent;
 import com.auction.common.event.WinnerReassignedEvent;
 import com.auction.payment.domain.Payment;
-import com.auction.payment.domain.PaymentStatus;
 import com.auction.payment.dto.PaymentProcessResult;
 import com.auction.payment.service.PaymentService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -17,9 +17,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -28,9 +28,6 @@ class AuctionWonEventConsumerTest {
 
     @Mock
     private PaymentService paymentService;
-
-    @Mock
-    private PaymentEventProducer eventProducer;
 
     @InjectMocks
     private AuctionWonEventConsumer consumer;
@@ -48,53 +45,23 @@ class AuctionWonEventConsumerTest {
         return payment;
     }
 
-    private Payment failedPayment() {
-        Payment payment = new Payment(100L, 77L, new BigDecimal("15000.00"), "100-77-0");
-        ReflectionTestUtils.setField(payment, "paymentId", 900L);
-        payment.fail("SIMULATED_FAILURE");
-        return payment;
-    }
-
-    private Payment requestedPayment() {
-        Payment payment = new Payment(100L, 77L, new BigDecimal("15000.00"), "100-77-0");
-        ReflectionTestUtils.setField(payment, "paymentId", 900L);
-        return payment;
-    }
+    // ---------- AuctionWonEvent ----------
 
     @Test
-    @DisplayName("결제 완료 시 PaymentCompletedEvent를 발행한다")
-    void handleAuctionWon_completed_publishesCompletedEvent() {
+    @DisplayName("AuctionWonEvent 수신 시 결제를 처리한다 (outbox는 서비스 내부에서 기록)")
+    void handleAuctionWon_callsPaymentService() {
         Payment payment = completedPayment();
         when(paymentService.process(any())).thenReturn(PaymentProcessResult.created(payment));
 
         consumer.handleAuctionWon(sampleEvent());
 
-        verify(eventProducer).publishCompleted(payment);
-        verify(eventProducer, never()).publishFailed(any());
-    }
-
-    @Test
-    @DisplayName("결제 실패 시 PaymentFailedEvent를 발행한다")
-    void handleAuctionWon_failed_publishesFailedEvent() {
-        Payment payment = failedPayment();
-        when(paymentService.process(any())).thenReturn(PaymentProcessResult.created(payment));
-
-        consumer.handleAuctionWon(sampleEvent());
-
-        verify(eventProducer).publishFailed(payment);
-        verify(eventProducer, never()).publishCompleted(any());
-    }
-
-    @Test
-    @DisplayName("결제가 REQUESTED 상태로 남으면 이벤트를 발행하지 않는다")
-    void handleAuctionWon_requested_publishesNothing() {
-        Payment payment = requestedPayment();
-        when(paymentService.process(any())).thenReturn(PaymentProcessResult.created(payment));
-
-        consumer.handleAuctionWon(sampleEvent());
-
-        verify(eventProducer, never()).publishCompleted(any());
-        verify(eventProducer, never()).publishFailed(any());
+        ArgumentCaptor<com.auction.payment.dto.PaymentRequest> captor =
+                ArgumentCaptor.forClass(com.auction.payment.dto.PaymentRequest.class);
+        verify(paymentService).process(captor.capture());
+        assertThat(captor.getValue().getAuctionId()).isEqualTo(100L);
+        assertThat(captor.getValue().getPayerId()).isEqualTo(77L);
+        assertThat(captor.getValue().getAmount()).isEqualByComparingTo("15000.00");
+        assertThat(captor.getValue().getIdempotencyKey()).isEqualTo("100-77-0");
     }
 
     @Test
@@ -103,15 +70,13 @@ class AuctionWonEventConsumerTest {
         when(paymentService.process(any())).thenThrow(new RuntimeException("DB error"));
 
         assertThatCode(() -> consumer.handleAuctionWon(sampleEvent())).doesNotThrowAnyException();
-        verify(eventProducer, never()).publishCompleted(any());
-        verify(eventProducer, never()).publishFailed(any());
     }
 
     // ---------- WinnerReassignedEvent ----------
 
     @Test
-    @DisplayName("차순위 승계 이벤트 수신 시 결제를 처리하고 결과 이벤트를 발행한다")
-    void handleWinnerReassigned_completed_publishesCompletedEvent() {
+    @DisplayName("차순위 승계 이벤트 수신 시 결제를 처리한다 (outbox는 서비스 내부에서 기록)")
+    void handleWinnerReassigned_callsPaymentService() {
         WinnerReassignedEvent event = new WinnerReassignedEvent(
                 "evt-r1", LocalDateTime.now(), 100L, 88L, new BigDecimal("12000.00"), "100-88-1");
         Payment payment = new Payment(100L, 88L, new BigDecimal("12000.00"), "100-88-1");
@@ -122,25 +87,13 @@ class AuctionWonEventConsumerTest {
 
         consumer.handleWinnerReassigned(event);
 
-        verify(eventProducer).publishCompleted(payment);
-        verify(eventProducer, never()).publishFailed(any());
-    }
-
-    @Test
-    @DisplayName("차순위 결제 실패 시 PaymentFailedEvent를 발행한다")
-    void handleWinnerReassigned_failed_publishesFailedEvent() {
-        WinnerReassignedEvent event = new WinnerReassignedEvent(
-                "evt-r2", LocalDateTime.now(), 100L, 88L, new BigDecimal("12000.00"), "100-88-1");
-        Payment payment = new Payment(100L, 88L, new BigDecimal("12000.00"), "100-88-1");
-        ReflectionTestUtils.setField(payment, "paymentId", 901L);
-        payment.fail("SIMULATED_FAILURE");
-
-        when(paymentService.process(any())).thenReturn(PaymentProcessResult.created(payment));
-
-        consumer.handleWinnerReassigned(event);
-
-        verify(eventProducer).publishFailed(payment);
-        verify(eventProducer, never()).publishCompleted(any());
+        ArgumentCaptor<com.auction.payment.dto.PaymentRequest> captor =
+                ArgumentCaptor.forClass(com.auction.payment.dto.PaymentRequest.class);
+        verify(paymentService).process(captor.capture());
+        assertThat(captor.getValue().getAuctionId()).isEqualTo(100L);
+        assertThat(captor.getValue().getPayerId()).isEqualTo(88L);
+        assertThat(captor.getValue().getAmount()).isEqualByComparingTo("12000.00");
+        assertThat(captor.getValue().getIdempotencyKey()).isEqualTo("100-88-1");
     }
 
     @Test

@@ -2,7 +2,6 @@ package com.auction.auction.controller;
 
 import com.auction.auction.dto.AuctionResponse;
 import com.auction.auction.dto.CreateAuctionRequest;
-import com.auction.auction.event.AuctionEventProducer;
 import com.auction.auction.service.AuctionService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -16,11 +15,9 @@ import java.util.List;
 public class AuctionController {
 
     private final AuctionService auctionService;
-    private final AuctionEventProducer eventProducer;
 
-    public AuctionController(AuctionService auctionService, AuctionEventProducer eventProducer) {
+    public AuctionController(AuctionService auctionService) {
         this.auctionService = auctionService;
-        this.eventProducer = eventProducer;
     }
 
     @PostMapping
@@ -36,7 +33,6 @@ public class AuctionController {
             @RequestHeader("X-User-Id") Long userId,
             @PathVariable Long auctionId) {
         AuctionResponse response = auctionService.startAuction(userId, auctionId);
-        eventProducer.publishStarted(response);
         return ResponseEntity.ok(response);
     }
 

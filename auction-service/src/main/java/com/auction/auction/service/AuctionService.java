@@ -5,28 +5,34 @@ import com.auction.auction.domain.AuctionStatus;
 import com.auction.auction.domain.Product;
 import com.auction.auction.dto.AuctionResponse;
 import com.auction.auction.dto.CreateAuctionRequest;
+import com.auction.auction.event.OutboxEventRecorder;
 import com.auction.auction.exception.ConflictException;
 import com.auction.auction.exception.ForbiddenException;
 import com.auction.auction.exception.InvalidRequestException;
 import com.auction.auction.exception.NotFoundException;
 import com.auction.auction.repository.AuctionRepository;
 import com.auction.auction.repository.ProductRepository;
+import com.auction.common.event.AuctionStartedEvent;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 
 @Service
 public class AuctionService {
 
     private final AuctionRepository auctionRepository;
     private final ProductRepository productRepository;
+    private final OutboxEventRecorder outboxRecorder;
 
     public AuctionService(AuctionRepository auctionRepository,
-                          ProductRepository productRepository) {
+                          ProductRepository productRepository,
+                          OutboxEventRecorder outboxRecorder) {
         this.auctionRepository = auctionRepository;
         this.productRepository = productRepository;
+        this.outboxRecorder = outboxRecorder;
     }
 
     @Transactional
@@ -47,6 +53,10 @@ public class AuctionService {
         return AuctionResponse.from(auction, product);
     }
 
+    /**
+     * WAITING → ACTIVE 전이 + AuctionStartedEvent outbox 기록.
+     * 트랜잭션 안에서 outbox INSERT가 함께 커밋된다.
+     */
     @Transactional
     public AuctionResponse startAuction(Long sellerId, Long auctionId) {
         Auction auction = findAuction(auctionId);
@@ -61,7 +71,6 @@ public class AuctionService {
                     "경매를 시작할 수 없습니다. 현재 상태: " + auction.getStatus());
         }
 
-        // 종료 시간이 이미 지난 경매를 시작하면 스케줄러가 즉시 마감하게 되므로 시작 자체를 거부한다.
         if (!auction.getEndTime().isAfter(LocalDateTime.now())) {
             throw new ConflictException("AUCTION_ALREADY_ENDED",
                     "이미 종료 시간이 지난 경매는 시작할 수 없습니다. endTime=" + auction.getEndTime());
@@ -71,6 +80,13 @@ public class AuctionService {
 
         auction.start();
         Auction saved = auctionRepository.save(auction);
+
+        AuctionStartedEvent event = new AuctionStartedEvent(
+                UUID.randomUUID().toString(), LocalDateTime.now(),
+                saved.getAuctionId(), product.getProductId(),
+                product.getStartingPrice(), saved.getEndTime());
+        outboxRecorder.record("Auction", saved.getAuctionId(), event);
+
         return AuctionResponse.from(saved, product);
     }
 
