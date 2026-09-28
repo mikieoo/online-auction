@@ -154,8 +154,21 @@
   - `DefaultErrorHandler` 선택 이유: auctionId 파티션 키 기반 순서 보장이 필요하므로 같은 파티션 내에서 재시도하는 방식 선택 (`@RetryableTopic`은 별도 토픽으로 보내 순서 깨짐).
 - 검증 상태: 단위 테스트 231개(auction 82, bid 79, payment 42, gateway 28) 통과. `./gradlew clean build` 통과.
 
+## 완료 (D14)
+
+- Docker 컨테이너화: 5개 서비스(auction, bid, payment, gateway, discovery) Multi-stage Dockerfile 작성.
+  - 빌드: `gradle:8.10-jdk17` → 런타임: `eclipse-temurin:17-jre` (arm64+amd64 지원).
+  - `.dockerignore`로 빌드 컨텍스트 최소화.
+  - 5개 이미지 빌드 검증 완료.
+- Docker Compose 확장: 기존 인프라(MySQL, Redis, Kafka, Zipkin) + Java 서비스 5개 통합.
+  - Kafka 듀얼 리스너: INTERNAL(29092, Docker 내부) + EXTERNAL(9092, 호스트).
+  - `depends_on` + `healthcheck`로 기동 순서 보장.
+  - `application-docker.yml` 프로필로 호스트명 오버라이드 (localhost → 컨테이너명).
+- GitHub Actions CI: `.github/workflows/ci.yml` — `build-and-test` + `docker-build` (5개 서비스 matrix).
+- 검증 상태: 단위 테스트 231개 통과. 5개 서비스 Docker 이미지 빌드 성공.
+
 ## 남은 범위
-- **D14~D21:** CQRS, Event Sourcing(선택), K8s 배포, Terraform 심화
+- **D15~D21:** CQRS, Event Sourcing(선택), K8s 배포, Terraform 심화
 - **D22~D30:** 관측성, CD 완성, 부하 테스트, 문서화
 
 밀릴 때 자르는 순서: Event Sourcing → Blue/Green → Alertmanager → gRPC → Loki.

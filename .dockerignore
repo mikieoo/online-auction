@@ -1,0 +1,10 @@
+.git
+.gradle
+.dryforge
+**/build
+**/out
+**/.idea
+docs/
+infra/k6/
+*.md
+!settings.gradle
