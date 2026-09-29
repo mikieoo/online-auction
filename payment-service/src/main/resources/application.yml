@@ -18,6 +18,10 @@ spring:
     open-in-view: false
   kafka:
     bootstrap-servers: localhost:9092
+    listener:
+      observation-enabled: true
+    template:
+      observation-enabled: true
     consumer:
       group-id: payment-service-group
       auto-offset-reset: earliest
@@ -47,3 +51,15 @@ eureka:
     prefer-ip-address: true
     lease-renewal-interval-in-seconds: 5
     lease-expiration-duration-in-seconds: 15
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId},%X{spanId}]"

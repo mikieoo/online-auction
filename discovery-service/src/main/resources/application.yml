@@ -22,3 +22,15 @@ eureka:
     eviction-interval-timer-in-ms: 5000
     # 응답 캐시 갱신 주기(기본 30초)를 줄여 등록·해제가 조회에 빨리 반영되게 한다.
     response-cache-update-interval-ms: 5000
+
+management:
+  tracing:
+    sampling:
+      probability: 1.0
+  zipkin:
+    tracing:
+      endpoint: http://localhost:9411/api/v2/spans
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId},%X{spanId}]"

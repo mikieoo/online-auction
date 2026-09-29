@@ -188,8 +188,19 @@
   - State: 로컬 파일 (.gitignore로 제외).
 - 검증 상태: `terraform init` + `terraform validate` 통과. 실제 프로비저닝은 GCP 프로젝트 설정 후 진행.
 
+## 완료 (D17)
+
+- 분산 트레이싱: Micrometer Tracing + OpenTelemetry + Zipkin.
+  - root build.gradle에 tracing 의존성 추가 (micrometer-tracing-bridge-otel, opentelemetry-exporter-zipkin).
+  - 5개 서비스 application.yml: sampling probability 1.0, Zipkin 엔드포인트.
+  - Kafka observation-enabled: auction/bid/payment 3개 서비스 — 비동기 구간도 trace 전파.
+  - 로그 패턴에 traceId/spanId 포함 — 로그 검색으로 요청 흐름 추적 가능.
+  - application-docker.yml: Zipkin 엔드포인트 오버라이드 (5개 서비스).
+  - 별도 코드 없이 의존성 + 설정만으로 자동 계측 (HTTP, Feign, gRPC, Kafka, JDBC).
+- 검증 상태: 단위 테스트 231개 통과. `./gradlew clean build` 통과.
+
 ## 남은 범위
-- **D17~D21:** GKE 배포, CQRS, Event Sourcing(선택)
-- **D22~D30:** 관측성, CD 완성, 부하 테스트, 문서화
+- **D18~D21:** 메트릭(Prometheus+Grafana), CD, 부하 테스트, Event Sourcing(선택)
+- **D22~D30:** 추가 관측성, 문서화
 
 밀릴 때 자르는 순서: Event Sourcing → Blue/Green → Alertmanager → gRPC → Loki.
