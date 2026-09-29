@@ -1,0 +1,70 @@
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "auction-platform.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $name }}
+spec:
+  replicas: {{ $svc.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "auction-platform.selectorLabels" $name | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "auction-platform.selectorLabels" $name | nindent 8 }}
+    spec:
+      containers:
+        - name: {{ $name }}
+          image: "{{ $svc.image.repository }}:{{ $svc.image.tag | default $.Values.global.image.tag }}"
+          imagePullPolicy: {{ $.Values.global.image.pullPolicy }}
+          ports:
+            {{- range $svc.ports }}
+            - name: {{ .name }}
+              containerPort: {{ .containerPort }}
+              protocol: TCP
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ $name }}-config
+          {{- if or $svc.database (eq $name "gateway") }}
+          env:
+            {{- if $svc.database }}
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auction-platform-secret
+                  key: mysql-password
+            {{- end }}
+            {{- if eq $name "gateway" }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auction-platform-secret
+                  key: jwt-secret
+            {{- end }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ (index $svc.ports 0).name }}
+            initialDelaySeconds: {{ $svc.probes.initialDelaySeconds }}
+            periodSeconds: 10
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: {{ (index $svc.ports 0).name }}
+            initialDelaySeconds: {{ add $svc.probes.initialDelaySeconds 30 }}
+            periodSeconds: 15
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 200m
+              memory: 384Mi
+            limits:
+              memory: 512Mi
+{{- end }}

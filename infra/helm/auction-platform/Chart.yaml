@@ -1,0 +1,6 @@
+apiVersion: v2
+name: auction-platform
+description: 온라인 경매 시스템 MSA Helm Chart
+type: application
+version: 0.1.0
+appVersion: "0.0.1-SNAPSHOT"

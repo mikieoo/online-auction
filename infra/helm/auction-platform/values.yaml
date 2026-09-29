@@ -1,0 +1,81 @@
+global:
+  image:
+    tag: latest
+    pullPolicy: IfNotPresent
+  mysql:
+    host: auction-mysql
+    port: 3306
+    username: root
+  kafka:
+    bootstrapServers: auction-kafka:29092
+  redis:
+    host: auction-redis
+    port: 6379
+  eureka:
+    url: http://discovery-service:8761/eureka
+
+secrets:
+  mysqlPassword: root
+  jwtSecret: helm-local-secret-key-minimum-32-bytes!!
+
+services:
+  discovery-service:
+    replicaCount: 1
+    image:
+      repository: discovery-service
+    ports:
+      - name: http
+        containerPort: 8761
+    env:
+      EUREKA_INSTANCE_HOSTNAME: discovery-service
+      EUREKA_CLIENT_REGISTER_WITH_EUREKA: "false"
+      EUREKA_CLIENT_FETCH_REGISTRY: "false"
+    probes:
+      initialDelaySeconds: 30
+
+  auction-service:
+    replicaCount: 1
+    image:
+      repository: auction-service
+    ports:
+      - name: http
+        containerPort: 8081
+    database: auction_db
+    probes:
+      initialDelaySeconds: 40
+
+  bid-service:
+    replicaCount: 1
+    image:
+      repository: bid-service
+    ports:
+      - name: http
+        containerPort: 8082
+      - name: grpc
+        containerPort: 9082
+    database: bid_db
+    useRedis: true
+    probes:
+      initialDelaySeconds: 40
+
+  payment-service:
+    replicaCount: 1
+    image:
+      repository: payment-service
+    ports:
+      - name: http
+        containerPort: 8083
+    database: payment_db
+    probes:
+      initialDelaySeconds: 40
+
+  gateway:
+    replicaCount: 1
+    image:
+      repository: gateway
+    ports:
+      - name: http
+        containerPort: 8080
+    serviceType: LoadBalancer
+    probes:
+      initialDelaySeconds: 30

@@ -167,8 +167,18 @@
 - GitHub Actions CI: `.github/workflows/ci.yml` — `build-and-test` + `docker-build` (5개 서비스 matrix).
 - 검증 상태: 단위 테스트 231개 통과. 5개 서비스 Docker 이미지 빌드 성공.
 
+## 완료 (D15)
+
+- Helm Chart: 5개 서비스를 하나의 차트로 관리하는 `infra/helm/auction-platform/` 작성.
+  - `range`로 서비스 순회 → Deployment, Service, ConfigMap 자동 생성 (16개 K8s 오브젝트).
+  - ConfigMap: 서비스별 DB URL, Kafka, Redis, Eureka 환경 변수. Spring Boot 환경 변수 오버라이드 방식.
+  - Secret: mysql-password, jwt-secret (base64 인코딩).
+  - Deployment: readiness/liveness probe (`/actuator/health`), resource requests/limits.
+  - Service: gateway만 LoadBalancer, 나머지 ClusterIP. bid-service는 HTTP+gRPC 두 포트.
+- 검증 상태: `helm lint` 통과, `helm template` 16개 오브젝트 정상 렌더링.
+
 ## 남은 범위
-- **D15~D21:** CQRS, Event Sourcing(선택), K8s 배포, Terraform 심화
+- **D16~D21:** Terraform(GKE), GKE 배포, CQRS, Event Sourcing(선택)
 - **D22~D30:** 관측성, CD 완성, 부하 테스트, 문서화
 
 밀릴 때 자르는 순서: Event Sourcing → Blue/Green → Alertmanager → gRPC → Loki.

@@ -1,0 +1,21 @@
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "auction-platform.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $name }}
+spec:
+  type: {{ $svc.serviceType | default "ClusterIP" }}
+  selector:
+    {{- include "auction-platform.selectorLabels" $name | nindent 4 }}
+  ports:
+    {{- range $svc.ports }}
+    - name: {{ .name }}
+      port: {{ .containerPort }}
+      targetPort: {{ .containerPort }}
+      protocol: TCP
+    {{- end }}
+{{- end }}

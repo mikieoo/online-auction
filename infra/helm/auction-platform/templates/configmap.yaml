@@ -1,0 +1,27 @@
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-config
+  labels:
+    {{- include "auction-platform.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $name }}
+data:
+  EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: {{ $.Values.global.eureka.url | quote }}
+  EUREKA_INSTANCE_PREFER_IP_ADDRESS: "true"
+  {{- if $svc.database }}
+  SPRING_DATASOURCE_URL: "jdbc:mysql://{{ $.Values.global.mysql.host }}:{{ $.Values.global.mysql.port }}/{{ $svc.database }}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul"
+  SPRING_DATASOURCE_USERNAME: {{ $.Values.global.mysql.username | quote }}
+  {{- end }}
+  {{- if $svc.database }}
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: {{ $.Values.global.kafka.bootstrapServers | quote }}
+  {{- end }}
+  {{- if $svc.useRedis }}
+  SPRING_DATA_REDIS_HOST: {{ $.Values.global.redis.host | quote }}
+  SPRING_DATA_REDIS_PORT: {{ $.Values.global.redis.port | quote }}
+  {{- end }}
+  {{- range $key, $val := $svc.env }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
+{{- end }}
