@@ -177,8 +177,19 @@
   - Service: gateway만 LoadBalancer, 나머지 ClusterIP. bid-service는 HTTP+gRPC 두 포트.
 - 검증 상태: `helm lint` 통과, `helm template` 16개 오브젝트 정상 렌더링.
 
+## 완료 (D16)
+
+- Terraform: GKE Autopilot + Artifact Registry + VPC 인프라 코드 작성.
+  - `infra/terraform/`: main.tf, variables.tf, vpc.tf, gke.tf, artifact-registry.tf, outputs.tf.
+  - VPC: 수동 서브넷 + Pod/Service 보조 IP 대역 (VPC-native 클러스터).
+  - GKE Autopilot: Pod requests 기준 과금, dev에서는 deletion_protection 끔.
+  - Artifact Registry: Docker 이미지 저장소 + 30일 미태그 이미지 자동 정리.
+  - Outputs: 클러스터 이름, 엔드포인트, 레지스트리 URL, kubectl 인증 명령어.
+  - State: 로컬 파일 (.gitignore로 제외).
+- 검증 상태: `terraform init` + `terraform validate` 통과. 실제 프로비저닝은 GCP 프로젝트 설정 후 진행.
+
 ## 남은 범위
-- **D16~D21:** Terraform(GKE), GKE 배포, CQRS, Event Sourcing(선택)
+- **D17~D21:** GKE 배포, CQRS, Event Sourcing(선택)
 - **D22~D30:** 관측성, CD 완성, 부하 테스트, 문서화
 
 밀릴 때 자르는 순서: Event Sourcing → Blue/Green → Alertmanager → gRPC → Loki.

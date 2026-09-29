@@ -1,0 +1,4 @@
+# 실제 사용 시 이 파일을 terraform.tfvars로 복사하고 project_id를 채운다.
+project_id = "my-gcp-project-id"
+region     = "asia-northeast3"
+environment = "dev"
