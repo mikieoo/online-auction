@@ -199,8 +199,20 @@
   - 별도 코드 없이 의존성 + 설정만으로 자동 계측 (HTTP, Feign, gRPC, Kafka, JDBC).
 - 검증 상태: 단위 테스트 231개 통과. `./gradlew clean build` 통과.
 
+## 완료 (D18)
+
+- 메트릭 모니터링: Prometheus + Grafana.
+  - root build.gradle에 `micrometer-registry-prometheus` 의존성 추가.
+  - 5개 서비스 application.yml: `/actuator/prometheus` 엔드포인트 노출 + application 태그.
+  - Prometheus 설정: `infra/prometheus/prometheus.yml` — 5개 서비스 15초 간격 스크래핑.
+  - Grafana 프로비저닝: 데이터소스(Prometheus) + 대시보드 자동 로드.
+  - 대시보드 패널: Request Rate, Error Rate, Response Time p95/p99, JVM Heap, JVM Threads, HikariCP, Circuit Breaker State.
+  - Docker Compose: Prometheus(9091), Grafana(3000) 컨테이너 추가.
+  - 별도 코드 없이 의존성 + 설정만으로 메트릭 수집·시각화.
+- 검증 상태: 단위 테스트 231개 통과. `./gradlew clean build` 통과.
+
 ## 남은 범위
-- **D18~D21:** 메트릭(Prometheus+Grafana), CD, 부하 테스트, Event Sourcing(선택)
+- **D19~D21:** CD, 부하 테스트, Event Sourcing(선택)
 - **D22~D30:** 추가 관측성, 문서화
 
 밀릴 때 자르는 순서: Event Sourcing → Blue/Green → Alertmanager → gRPC → Loki.

@@ -24,6 +24,13 @@ eureka:
     response-cache-update-interval-ms: 5000
 
 management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
   tracing:
     sampling:
       probability: 1.0

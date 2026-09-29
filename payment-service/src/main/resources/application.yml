@@ -53,6 +53,13 @@ eureka:
     lease-expiration-duration-in-seconds: 15
 
 management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  metrics:
+    tags:
+      application: ${spring.application.name}
   tracing:
     sampling:
       probability: 1.0
