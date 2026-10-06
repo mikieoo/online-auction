@@ -1,5 +1,6 @@
 global:
   image:
+    registry: ""
     tag: latest
     pullPolicy: IfNotPresent
   mysql:

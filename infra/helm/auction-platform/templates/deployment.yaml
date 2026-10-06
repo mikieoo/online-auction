@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: {{ $name }}
-          image: "{{ $svc.image.repository }}:{{ $svc.image.tag | default $.Values.global.image.tag }}"
+          image: "{{- if $.Values.global.image.registry }}{{ $.Values.global.image.registry }}/{{- end }}{{ $svc.image.repository }}:{{ $svc.image.tag | default $.Values.global.image.tag }}"
           imagePullPolicy: {{ $.Values.global.image.pullPolicy }}
           ports:
             {{- range $svc.ports }}

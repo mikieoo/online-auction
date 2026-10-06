@@ -1,0 +1,87 @@
+name: CD
+
+# main 브랜치 push에만 실행 (PR 머지 = main push)
+on:
+  push:
+    branches: [main]
+
+env:
+  GCP_REGION: ${{ secrets.GCP_REGION }}               # asia-northeast3
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GKE_CLUSTER_NAME: ${{ secrets.GKE_CLUSTER_NAME }}    # auction-cluster
+  REGISTRY: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/auction-registry
+
+jobs:
+  # ──────────────────────────────────────────────
+  # 1. 이미지 빌드 + Artifact Registry push
+  # ──────────────────────────────────────────────
+  docker-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write    # Workload Identity Federation에 필요
+    strategy:
+      matrix:
+        service:
+          - auction-service
+          - bid-service
+          - payment-service
+          - gateway
+          - discovery-service
+    steps:
+      - uses: actions/checkout@v4
+
+      # GCP 인증 — 서비스 계정 키 없이 OIDC 토큰으로 인증
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # Artifact Registry Docker 인증 설정
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ matrix.service }}:${{ github.sha }}
+          docker build -f ${{ matrix.service }}/Dockerfile -t $IMAGE .
+          docker push $IMAGE
+
+  # ──────────────────────────────────────────────
+  # 2. Helm으로 GKE 배포
+  # ──────────────────────────────────────────────
+  deploy:
+    needs: docker-push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # GKE 클러스터 인증 — kubectl 사용 가능하게
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER_NAME }}
+          location: ${{ env.GCP_REGION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      # helm upgrade --install: 있으면 업그레이드, 없으면 설치 (멱등)
+      # --wait: 모든 Pod이 Ready가 될 때까지 대기
+      # --timeout: 대기 상한 (Java 서비스 기동이 느릴 수 있음)
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install auction-platform ./infra/helm/auction-platform \
+            --set global.image.registry=${{ env.REGISTRY }} \
+            --set global.image.tag=${{ github.sha }} \
+            --wait \
+            --timeout 5m

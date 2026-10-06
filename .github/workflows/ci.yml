@@ -24,6 +24,8 @@ jobs:
 
   docker-build:
     needs: build-and-test
+    # PR에서는 이미지 빌드만 검증 (push 안 함)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       matrix:

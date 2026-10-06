@@ -211,8 +211,20 @@
   - 별도 코드 없이 의존성 + 설정만으로 메트릭 수집·시각화.
 - 검증 상태: 단위 테스트 231개 통과. `./gradlew clean build` 통과.
 
+## 완료 (D19)
+
+- CD 파이프라인: GitHub Actions → Artifact Registry → GKE Helm 배포.
+  - CI/CD 분리: `ci.yml`(빌드+테스트, PR은 docker-build 검증), `cd.yml`(main push 시 배포).
+  - `docker-push` job: Workload Identity Federation으로 GCP 인증, 5개 서비스 Artifact Registry push (matrix 병렬).
+  - `deploy` job: `helm upgrade --install`로 GKE 배포, `--wait --timeout 5m`.
+  - 이미지 태그: git SHA (불변, 추적·롤백 가능).
+  - Helm values.yaml: `global.image.registry` 추가. CD에서 `--set`으로 주입, 로컬은 빈 문자열.
+  - Deployment 템플릿: registry 유무에 따라 이미지 경로 조건 렌더링.
+  - GCP 프로젝트 없이 코드·구조 검증까지만 진행.
+- 검증 상태: `helm lint` 통과, `helm template` 이미지 경로 정상 렌더링. 단위 테스트 231개 통과.
+
 ## 남은 범위
-- **D19~D21:** CD, 부하 테스트, Event Sourcing(선택)
+- **D20~D21:** 부하 테스트, Event Sourcing(선택)
 - **D22~D30:** 추가 관측성, 문서화
 
 밀릴 때 자르는 순서: Event Sourcing → Blue/Green → Alertmanager → gRPC → Loki.
