@@ -235,8 +235,21 @@
 - 문서: `docs/notes/D20-부하-테스트.md`, operations.md 부하 테스트 절, standards.md(원격 호출을 트랜잭션·분산 락 안에 두지 않는다), engineering-notes 4항목, findings 3건 추가.
 - 검증 상태: 단위 테스트 233개(auction 82, bid 81 (+2), payment 42, gateway 28) 통과. `./gradlew clean build` 통과. 전체 스택 컨테이너 실기동에서 세 시나리오 수정 전후 측정.
 
+## 완료 (D21)
+
+- ACTIVE 유일성 DB 제약: MySQL에 조건부 UNIQUE가 없어 생성 컬럼 + UNIQUE로 흉내.
+  - auction: `active_product_id = IF(status='ACTIVE', product_id, NULL)` + `uk_auction_active_product`. bid: `active_auction_id` + `uk_bid_active_auction`. 엔티티에는 매핑하지 않음.
+  - `AuctionService.startAuction`: `saveAndFlush`로 위반을 받아 409 `ACTIVE_AUCTION_EXISTS`로 변환(다른 무결성 위반은 그대로), WARN 로그.
+  - `BidService.placeBid`: 이전 ACTIVE의 OUTBID UPDATE를 `saveAndFlush`로 먼저 내보낸 뒤 새 입찰 INSERT(IDENTITY라 INSERT가 즉시 나가 순서를 지키지 않으면 모든 정상 입찰이 제약에 걸린다). 위반은 409 `BID_CONFLICT`.
+  - 사전 검사(`ensureNoActiveAuction`)·분산 락은 빠른 거절·순서 처리용으로 유지, 제약은 최종 방어.
+- 경합 재현 스크립트 `infra/k6/concurrent-start.js`: 같은 상품 경매 두 개 동시 시작 100회 → 정확히 하나만 시작 100/100, DB 제약이 막은 횟수 100(두 요청이 매번 사전 검사를 함께 통과).
+- 세 서비스의 `schema.sql` 원본을 init 사본과 다시 맞춤(auction `processed_event`, bid `version`, payment `outbox`·`shedlock` 누락).
+- findings에서 해결된 2건 제거(ACTIVE Bid 2개, 같은 상품 동시 시작).
+- 검증 상태: 단위 테스트 238개(auction 84 (+2), bid 84 (+3), payment 42, gateway 28) 통과. `./gradlew clean build` 통과. 실기동: SQL 수준 제약 확인, 경합 재현 100회, D20 시나리오 회귀(인기 경매 150/s 409 0건·불변 조건 통과, 동시 마감 200개 200/200).
+- 문서: `docs/notes/D21-ACTIVE-유일성-DB-제약.md`, engineering-notes(조건부 UNIQUE, flush 순서), standards(DB 절), business-rules, operations.
+
 ## 남은 범위
-- **D21:** Event Sourcing(선택)
+- **D22~:** Event Sourcing(선택)
 - **D22~D30:** 추가 관측성, 문서화
 
 밀릴 때 자르는 순서: Event Sourcing → Blue/Green → Alertmanager → gRPC → Loki.
