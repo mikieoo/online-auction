@@ -15,9 +15,11 @@ global:
   eureka:
     url: http://discovery-service:8761/eureka
 
+# 비밀값은 기본값을 두지 않는다. 이 파일은 공개 저장소에 있으므로, 여기 적힌 값은 곧 "모두가 아는 키"다.
+# 설치할 때 --set-string으로 주입한다(CD: GitHub Secrets → cd.yml). 비어 있으면 렌더링이 실패한다.
 secrets:
-  mysqlPassword: root
-  jwtSecret: helm-local-secret-key-minimum-32-bytes!!
+  mysqlPassword: ""
+  jwtSecret: ""
 
 services:
   discovery-service:

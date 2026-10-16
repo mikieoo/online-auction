@@ -108,3 +108,7 @@ auction-service의 BidClient·PaymentClient는 fallback이 없어서 실패가 `
 
 증상: Gateway가 `Port 8080 was already in use`로 기동 실패. 이 PC에서는 Oracle의 `TNSLSNR`이 8080(XDB HTTP)을 쓰고 있다. 대응: `--server.port=8090`으로 띄운다. 문서의 8080 예시는 그 포트로 바꿔 읽는다.
 
+## Helm values.yaml에 비밀값을 두면 CD가 그대로 운영 키로 쓴다
+
+D15~D19의 `values.yaml`에는 `secrets.jwtSecret`·`mysqlPassword` 기본값이 있었고, CD(`helm upgrade`)는 이 값을 덮어쓰지 않았다. 그대로 GKE에 배포되면 공개 저장소에 적힌 JWT 키로 운영 Gateway가 서명을 검증하므로, 누구나 임의의 userId로 토큰을 만들 수 있다. 지금은 기본값을 비우고 `required`로 막았으며, CD가 GitHub Secrets에서 주입한다. 로컬에서 `helm lint`/`helm template`을 돌릴 때도 `--set-string secrets.mysqlPassword=… --set-string secrets.jwtSecret=…`를 줘야 한다. 이미 공개된 키(`helm-local-secret-…`, `docker-local-secret-…`)는 운영에 쓰지 않는다.
+
