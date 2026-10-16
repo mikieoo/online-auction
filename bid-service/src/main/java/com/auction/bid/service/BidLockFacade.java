@@ -1,5 +1,6 @@
 package com.auction.bid.service;
 
+import com.auction.bid.client.AuctionSummaryResponse;
 import com.auction.bid.domain.Bid;
 import com.auction.bid.dto.PlaceBidRequest;
 import com.auction.bid.exception.BidConflictException;
@@ -14,8 +15,11 @@ import java.util.concurrent.TimeUnit;
 /**
  * auctionId 기준 분산 락(Redisson)으로 입찰을 직렬화하는 Facade.
  *
- * 락 획득 → BidService.placeBid(트랜잭션) → 락 해제 순서로 동작한다.
+ * BidService.prepareBid(경매 조회·검사, 락 밖) → 락 획득 → BidService.placeBid(트랜잭션) → 락 해제 순서로 동작한다.
  * 락이 트랜잭션 바깥에 있으므로, 트랜잭션 커밋까지 보호된다.
+ *
+ * 락 안에는 DB 작업만 남는다. 원격 조회(connect 2초 + read 5초)를 락 안에 두면 임대 시간(5초)보다
+ * 오래 걸릴 수 있어, 처리 중에 락이 풀려 다음 요청이 같은 경매에 동시에 들어오는 틈이 생겼다.
  *
  * @Version 낙관적 락은 안전망으로 유지한다(Redis 장애 시 DB 레벨에서 잡아냄).
  */
@@ -36,6 +40,8 @@ public class BidLockFacade {
     }
 
     public Bid placeBidWithLock(Long bidderId, PlaceBidRequest request) {
+        AuctionSummaryResponse auction = bidService.prepareBid(bidderId, request);
+
         Long auctionId = request.getAuctionId();
         RLock lock = redissonClient.getLock(LOCK_KEY_PREFIX + auctionId);
 
@@ -46,7 +52,7 @@ public class BidLockFacade {
                 log.warn("분산 락 획득 실패. auctionId={}", auctionId);
                 throw new BidConflictException(auctionId);
             }
-            return bidService.placeBid(bidderId, request);
+            return bidService.placeBid(bidderId, request, auction);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BidConflictException(auctionId);

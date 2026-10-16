@@ -38,7 +38,7 @@ outbox 테이블은 D1에서 스키마만 생성했다. 실제 Outbox 패턴 구
 
 ## 다건 순회 경로에서 Feign 호출은 DB 트랜잭션 밖에서
 
-정산 스케줄러처럼 여러 경매를 순회하는 경로에서 트랜잭션 안에서 원격 호출을 하면 커넥션을 원격 응답 시간(최대 읽기 타임아웃 5초)만큼 점유해 풀이 고갈되고, 원격은 성공했는데 커밋이 실패하면 두 서비스 상태가 어긋난다. 정산 스케줄러는 "Feign 호출 → 결과를 짧은 트랜잭션으로 저장" 순서를 지키며, 경매 1건 = 트랜잭션 1개다. 확인: 스케줄러 빈에 `@Transactional`이 없어야 하고, `AuctionSettlementService`의 메서드는 Feign 클라이언트를 주입받지 않아야 한다. 예외: bid-service `BidService.placeBid`는 요청 1건당 경매 조회 1회를 `@Transactional` 안에서 한다 — 쓰기 전 검증에 그 값이 필요하고 순회가 없어 커넥션 점유가 요청 1건 범위로 끝나므로 의도적으로 허용했다. D7 분산 락 도입 때 락 → 조회 → 트랜잭션 쓰기 순서로 재구성한다.
+정산 스케줄러처럼 여러 경매를 순회하는 경로에서 트랜잭션 안에서 원격 호출을 하면 커넥션을 원격 응답 시간(최대 읽기 타임아웃 5초)만큼 점유해 풀이 고갈되고, 원격은 성공했는데 커밋이 실패하면 두 서비스 상태가 어긋난다. 정산 스케줄러는 "Feign 호출 → 결과를 짧은 트랜잭션으로 저장" 순서를 지키며, 경매 1건 = 트랜잭션 1개다. 확인: 스케줄러 빈에 `@Transactional`이 없어야 하고, `AuctionSettlementService`의 메서드는 Feign 클라이언트를 주입받지 않아야 한다. 요청 1건당 조회 1회인 API 경로도 예외가 아니다(D20). 입찰 접수는 원래 경매 조회를 `@Transactional` 안에서 했는데, 부하 테스트에서 auction-service 응답이 5ms → 48ms로 느려지자 커넥션 보유 시간이 그만큼 늘어 bid-service 풀(10개)이 먼저 고갈됐다(대기 최대 29건, p95 692ms). 지금은 `BidService.prepareBid`(조회·검사, 락·트랜잭션 밖) → 분산 락 → `BidService.placeBid`(짧은 트랜잭션) 순서다.
 
 ## Feign 연결 실패·타임아웃은 ErrorDecoder를 거치지 않는다
 
@@ -107,4 +107,20 @@ auction-service의 BidClient·PaymentClient는 fallback이 없어서 실패가 `
 ## 8080 포트 충돌 (Oracle TNS 리스너)
 
 증상: Gateway가 `Port 8080 was already in use`로 기동 실패. 이 PC에서는 Oracle의 `TNSLSNR`이 8080(XDB HTTP)을 쓰고 있다. 대응: `--server.port=8090`으로 띄운다. 문서의 8080 예시는 그 포트로 바꿔 읽는다.
+
+## 원격 호출은 분산 락 안에도 두지 않는다 (임대 시간 초과)
+
+Redisson `tryLock(wait, lease)`의 lease는 처리 중이어도 시간이 되면 락을 푼다. 입찰 락의 lease는 5초인데, D19까지는 락 안에서 auction-service를 조회해(connect 2초 + read 5초) 최악 7초가 걸릴 수 있었다. 상류가 느린 순간 락이 처리 도중 풀리고 다음 요청이 같은 경매에 들어온다. 기존 ACTIVE를 OUTBID로 바꾸는 경로는 `@Version`이 막지만, 첫 입찰 두 건의 동시 INSERT는 막지 못해 ACTIVE가 2개가 된다. D20에서 조회를 락 밖으로 옮겨 락 안에는 DB 작업만 남았다. 락 안에 다시 원격 호출을 넣거나 lease를 줄일 때는 "락 안 최악 처리 시간 < lease"를 먼저 확인한다. 남은 경계: 락 안에서 Hikari 커넥션을 기다리는 시간(기본 connection-timeout 30초)은 lease보다 길 수 있다. 풀 고갈이 없는 한 문제되지 않는다.
+
+## 락 밖에서 조회한 경매 상태는 락 대기 시간만큼 오래됐을 수 있다
+
+조회를 락 앞으로 옮기면 그 값은 최대 락 대기(3초)만큼 오래된다. 마감 검사(`end_time > now`)를 락을 잡은 뒤 트랜잭션 안에서, 그 시점의 시각으로 하는 이유다. ACTIVE에서 바뀔 수 있는 상태는 CLOSED뿐이고 CLOSED는 end_time이 지나야 되므로, 이 검사가 오래된 status 값의 빈틈까지 막는다. 상태 전이(예: 일시정지 같은 ACTIVE → 다른 상태)를 추가하면 이 전제가 깨진다 — 그때는 락 안에서 상태를 다시 확인해야 한다.
+
+## 부하 테스트 스택은 프로젝트 이름을 지정해야 뜬다
+
+작업 폴더 이름에 한글이 있으면 `docker compose`가 프로젝트 이름을 만들지 못해 `project name must not be empty`로 실패한다. `infra/k6/compose.loadtest.yml`은 `name: auction-loadtest`를 지정해 이를 피하고, 개발용 볼륨과도 분리한다. 기본 compose만 쓸 때는 `-p <이름>`을 준다.
+
+## 서비스 컨테이너 JVM은 UTC다
+
+이미지(`eclipse-temurin:17-jre`)에 TZ 설정이 없어 컨테이너 안의 `LocalDateTime.now()`는 UTC다. 경매 `endTime`은 오프셋 없는 LocalDateTime이므로, 컨테이너 스택에 경매를 만들 때는 UTC 벽시계 시각을 보내야 한다(k6 `serverLocalDateTime()`). 호스트에서 직접 띄운 서비스(KST)와 섞어 쓰면 마감 시각이 9시간 어긋난다.
 

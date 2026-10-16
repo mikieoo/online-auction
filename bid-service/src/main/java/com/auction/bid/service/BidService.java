@@ -51,14 +51,14 @@ public class BidService {
     }
 
     /**
-     * 입찰 접수. 검사 순서: 금액 형식 → 경매 조회 → 판매자 본인 → 경매 상태/마감 → 금액 규칙 → 저장.
-     * 첫 실패에서 즉시 거절한다.
+     * 입찰 접수 1단계 — 락·트랜잭션 없이 수행하는 검사. 금액 형식 → 경매 조회 → 판매자 본인 → 경매 상태.
+     * 첫 실패에서 즉시 거절한다. 통과하면 2단계({@link #placeBid})에 넘길 경매 정보를 돌려준다.
      *
-     * 동시성: {@link BidLockFacade}가 auctionId 기준 분산 락(Redisson)으로 이 메서드 호출을 직렬화한다.
-     * {@code @Version} 낙관적 락은 Redis 장애 시 안전망으로 유지한다.
+     * auction-service 조회(Feign)를 트랜잭션과 분산 락 밖에 두는 이유(D20 부하 테스트):
+     * 트랜잭션 안에서 조회하면 DB 커넥션을 원격 응답 시간만큼 붙잡아, 부하 시 조회가 느려지는 순간
+     * 커넥션 풀(10개)이 먼저 고갈됐다. 락 안에서 조회하면 락 보유 시간도 그만큼 늘어 한 경매의 처리량 상한이 낮아진다.
      */
-    @Transactional
-    public Bid placeBid(Long bidderId, PlaceBidRequest request) {
+    public AuctionSummaryResponse prepareBid(Long bidderId, PlaceBidRequest request) {
         if (bidderId == null) {
             throw new InvalidRequestException("X-User-Id 헤더는 필수입니다.");
         }
@@ -85,6 +85,24 @@ public class BidService {
         if (!AUCTION_STATUS_ACTIVE.equals(auction.getStatus())) {
             throw new AuctionNotActiveException(auctionId, auction.getStatus());
         }
+        return auction;
+    }
+
+    /**
+     * 입찰 접수 2단계 — 분산 락 안에서 실행하는 짧은 트랜잭션. 마감 시각 → 금액 규칙 → 저장.
+     *
+     * {@code auction}은 락을 기다리기 전에 조회한 값이라 최대 락 대기 시간만큼 오래됐을 수 있다.
+     * 그래서 마감 검사는 여기서, 락을 잡은 뒤의 현재 시각으로 한다. ACTIVE에서 바뀔 수 있는 상태는
+     * CLOSED뿐이고 CLOSED는 end_time이 지나야 되므로, 이 검사가 오래된 상태 값의 빈틈을 함께 막는다.
+     *
+     * 동시성: {@link BidLockFacade}가 auctionId 기준 분산 락(Redisson)으로 이 메서드 호출을 직렬화한다.
+     * {@code @Version} 낙관적 락은 Redis 장애 시 안전망으로 유지한다.
+     */
+    @Transactional
+    public Bid placeBid(Long bidderId, PlaceBidRequest request, AuctionSummaryResponse auction) {
+        Long auctionId = request.getAuctionId();
+        BigDecimal amount = request.getAmount();
+
         LocalDateTime now = LocalDateTime.now(clock);
         if (auction.getEndTime() != null && !auction.getEndTime().isAfter(now)) {
             throw new AuctionAlreadyEndedException(auctionId);
