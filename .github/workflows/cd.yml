@@ -78,10 +78,17 @@ jobs:
       # helm upgrade --install: 있으면 업그레이드, 없으면 설치 (멱등)
       # --wait: 모든 Pod이 Ready가 될 때까지 대기
       # --timeout: 대기 상한 (Java 서비스 기동이 느릴 수 있음)
+      # 비밀값은 values.yaml에 두지 않고 GitHub Secrets에서 주입한다. 값을 run 스크립트에 직접 펼치지 않고
+      # env로 넘겨, 특수문자가 셸에서 해석되거나 명령줄 로그에 남는 것을 막는다.
       - name: Deploy with Helm
+        env:
+          MYSQL_PASSWORD: ${{ secrets.MYSQL_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
           helm upgrade --install auction-platform ./infra/helm/auction-platform \
             --set global.image.registry=${{ env.REGISTRY }} \
             --set global.image.tag=${{ github.sha }} \
+            --set-string secrets.mysqlPassword="$MYSQL_PASSWORD" \
+            --set-string secrets.jwtSecret="$JWT_SECRET" \
             --wait \
             --timeout 5m

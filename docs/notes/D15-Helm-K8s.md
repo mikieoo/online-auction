@@ -128,8 +128,8 @@ CPU limit은 throttling을 유발해서 오히려 성능이 나빠질 수 있다
 ## 검증
 
 ```bash
-helm lint infra/helm/auction-platform/           # 문법 검사
-helm template auction-platform infra/helm/...    # 렌더링 확인
+helm lint infra/helm/auction-platform/ --set-string secrets.mysqlPassword=x --set-string secrets.jwtSecret=y   # 문법 검사 (비밀값 필수)
+helm template auction-platform infra/helm/... --set-string secrets.mysqlPassword=x --set-string secrets.jwtSecret=y   # 렌더링 확인
 ```
 
 실제 클러스터 배포는 D16(Terraform + GKE)에서 진행.

@@ -49,6 +49,6 @@ Gateway는 경로를 정규화하지 않는다. `/api/v1/bids/../../internal/v1/
 
 ## 민감 데이터
 
-- DB 비밀번호는 로컬에서는 docker-compose.yml 환경 변수, GKE에서는 K8s Secret으로 관리.
+- DB 비밀번호는 로컬에서는 docker-compose.yml 환경 변수, GKE에서는 K8s Secret으로 관리. K8s Secret의 값은 Helm `values.yaml`에 두지 않는다 — CD가 GitHub Secrets(`MYSQL_PASSWORD`, `JWT_SECRET`)에서 `--set-string`으로 주입하고, 값이 비어 있으면 차트 렌더링이 실패한다(`required`).
 - JWT 서명 키는 환경 변수 `JWT_SECRET`으로만 주입한다. 코드·설정 파일에 기본값을 두지 않으며, 없거나 32바이트 미만이면 Gateway가 기동에 실패한다. 테스트 전용 키는 테스트 코드 안에서만 쓴다.
 - 결제 정보(payerId, 금액, 결과)는 본인 외에 조회할 수 없다. 오류 메시지에도 타인의 결제 내용을 담지 않는다.

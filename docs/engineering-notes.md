@@ -124,3 +124,7 @@ Redisson `tryLock(wait, lease)`의 lease는 처리 중이어도 시간이 되면
 
 이미지(`eclipse-temurin:17-jre`)에 TZ 설정이 없어 컨테이너 안의 `LocalDateTime.now()`는 UTC다. 경매 `endTime`은 오프셋 없는 LocalDateTime이므로, 컨테이너 스택에 경매를 만들 때는 UTC 벽시계 시각을 보내야 한다(k6 `serverLocalDateTime()`). 호스트에서 직접 띄운 서비스(KST)와 섞어 쓰면 마감 시각이 9시간 어긋난다.
 
+## Helm values.yaml에 비밀값을 두면 CD가 그대로 운영 키로 쓴다
+
+D15~D19의 `values.yaml`에는 `secrets.jwtSecret`·`mysqlPassword` 기본값이 있었고, CD(`helm upgrade`)는 이 값을 덮어쓰지 않았다. 그대로 GKE에 배포되면 공개 저장소에 적힌 JWT 키로 운영 Gateway가 서명을 검증하므로, 누구나 임의의 userId로 토큰을 만들 수 있다. 지금은 기본값을 비우고 `required`로 막았으며, CD가 GitHub Secrets에서 주입한다. 로컬에서 `helm lint`/`helm template`을 돌릴 때도 `--set-string secrets.mysqlPassword=… --set-string secrets.jwtSecret=…`를 줘야 한다. 이미 공개된 키(`helm-local-secret-…`, `docker-local-secret-…`)는 운영에 쓰지 않는다.
+
