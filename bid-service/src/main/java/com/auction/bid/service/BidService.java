@@ -19,6 +19,7 @@ import com.auction.bid.repository.BidRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,6 +35,7 @@ public class BidService {
 
     private static final Logger log = LoggerFactory.getLogger(BidService.class);
     private static final String AUCTION_STATUS_ACTIVE = "ACTIVE";
+    static final String ACTIVE_AUCTION_CONSTRAINT = "uk_bid_active_auction";
 
     private final BidRepository bidRepository;
     private final AuctionClient auctionClient;
@@ -123,12 +125,30 @@ public class BidService {
         }
 
         // 같은 입찰자가 금액을 올리는 경우에도 이전 ACTIVE Bid는 OUTBID로 내린다 (ACTIVE 최대 1개 불변 조건).
+        // saveAndFlush 필수: Bid id가 IDENTITY라 새 Bid는 save 순간 INSERT되는데, 이전 Bid의 UPDATE는 flush까지 미뤄진다.
+        // 미뤄진 채로 INSERT하면 잠시 ACTIVE가 2개가 되어 uk_bid_active_auction에 걸린다.
         currentActive.ifPresent(previous -> {
             previous.markOutbid();
-            bidRepository.save(previous);
+            bidRepository.saveAndFlush(previous);
         });
 
-        return bidRepository.save(new Bid(auctionId, bidderId, amount));
+        try {
+            return bidRepository.saveAndFlush(new Bid(auctionId, bidderId, amount));
+        } catch (DataIntegrityViolationException e) {
+            // 분산 락을 거치지 않은 동시 입찰(예: Redis 장애)이 같은 경매에 ACTIVE를 하나 더 만들려 한 경우.
+            if (violates(e, ACTIVE_AUCTION_CONSTRAINT)) {
+                log.warn("ACTIVE 입찰 중복 INSERT를 DB 제약이 막음(분산 락 밖 경합). auctionId={}, bidderId={}",
+                        auctionId, bidderId);
+                throw new BidConflictException(auctionId);
+            }
+            throw e;
+        }
+    }
+
+    /** 원인 메시지 예: Duplicate entry '7' for key 'bid.uk_bid_active_auction' */
+    private static boolean violates(DataIntegrityViolationException e, String constraint) {
+        String message = e.getMostSpecificCause().getMessage();
+        return message != null && message.contains(constraint);
     }
 
     @Transactional(readOnly = true)

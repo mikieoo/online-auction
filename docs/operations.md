@@ -133,13 +133,16 @@ $LT run --rm -e RATE=150 k6 run -o experimental-prometheus-rw --tag testid=hot-1
 $LT run --rm -e PEAK=600 k6 run -o experimental-prometheus-rw --tag testid=tp-600 /scripts/bid-throughput.js
 # 시나리오 3: 경매 N개 동시 마감 → 정산 완료까지 시간 (AUCTIONS, END_IN)
 $LT run --rm -e AUCTIONS=200 k6 run -o experimental-prometheus-rw --tag testid=drain-200 /scripts/settlement-drain.js
+# 경합 재현: 같은 상품의 WAITING 경매 두 개 동시 시작 (TRIALS). 매번 200 하나 + 409 하나여야 한다
+$LT run --rm -e TRIALS=100 k6 run /scripts/concurrent-start.js
 
 $LT down                              # 종료 (데이터 유지). 초기화는 down -v
 ```
 
 - 결과는 k6 요약과 Grafana(`localhost:3000`, Prometheus 데이터소스)에서 본다. k6 지표는 `k6_` 접두사, `testid` 태그로 실행을 구분한다.
 - 병목 확인에 쓴 쿼리: `max_over_time(hikaricp_connections_pending{application="bid-service"}[10m])`(커넥션 대기), `hikaricp_connections_usage_seconds`(보유 시간), `http_client_requests_seconds{application="bid-service"}`(auction 조회 시간).
-- k6가 같은 PC에서 돌아 CPU를 나눠 쓴다. 절대 수치보다 전후 비교로 읽는다. 측정 결과와 해석은 `docs/notes/D20-부하-테스트.md`.
+- k6가 같은 PC에서 돌아 CPU를 나눠 쓴다. 절대 수치보다 전후 비교로 읽는다. 스택을 새로 띄운 직후 첫 실행은 워밍업(10초)으로도 덜 데워져 p95가 몇 배 높게 나온다 — 비교는 두 번째 실행부터 한다.
+- 스키마를 바꾼 뒤에는 `$LT down -v`로 볼륨을 지워야 init 스크립트가 다시 돈다. 측정 결과와 해석은 `docs/notes/D20-부하-테스트.md`.
 
 ## 작업 종료
 

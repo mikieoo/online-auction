@@ -19,9 +19,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
+import java.sql.SQLIntegrityConstraintViolationException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -85,7 +87,7 @@ class AuctionServiceTest {
 
         assertErrorCode(t, ConflictException.class, "AUCTION_ALREADY_ENDED");
         assertThat(auction.getStatus()).isEqualTo(AuctionStatus.WAITING);
-        verify(auctionRepository, never()).save(any());
+        verify(auctionRepository, never()).saveAndFlush(any());
     }
 
     @Test
@@ -143,7 +145,7 @@ class AuctionServiceTest {
         when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
         when(productRepository.findById(PRODUCT_ID)).thenReturn(Optional.of(product));
         when(auctionRepository.existsByProductIdAndStatus(PRODUCT_ID, AuctionStatus.ACTIVE)).thenReturn(false);
-        when(auctionRepository.save(auction)).thenReturn(auction);
+        when(auctionRepository.saveAndFlush(auction)).thenReturn(auction);
 
         AuctionResponse response = auctionService.startAuction(SELLER_ID, AUCTION_ID);
 
@@ -152,6 +154,41 @@ class AuctionServiceTest {
         assertThat(response.getSellerId()).isEqualTo(SELLER_ID);
         assertThat(response.getStartingPrice()).isEqualByComparingTo("50000.00");
         verify(outboxRecorder).record(any(), any(), any());
+    }
+
+    private static DataIntegrityViolationException duplicateKey(String key) {
+        return new DataIntegrityViolationException("could not execute statement",
+                new SQLIntegrityConstraintViolationException("Duplicate entry '1' for key '" + key + "'"));
+    }
+
+    @Test
+    @DisplayName("startAuction: 사전 검사를 함께 통과한 동시 시작은 uk_auction_active_product 위반 → 409 ACTIVE_AUCTION_EXISTS, 이벤트 기록 안 함")
+    void startAuction_concurrentStartBlockedByConstraint() {
+        Auction auction = auctionWithEndTime(LocalDateTime.now().plusHours(1));
+        when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
+        when(productRepository.findById(PRODUCT_ID)).thenReturn(Optional.of(product));
+        when(auctionRepository.existsByProductIdAndStatus(PRODUCT_ID, AuctionStatus.ACTIVE)).thenReturn(false);
+        when(auctionRepository.saveAndFlush(auction)).thenThrow(duplicateKey("auction.uk_auction_active_product"));
+
+        Throwable t = catchThrowable(() -> auctionService.startAuction(SELLER_ID, AUCTION_ID));
+
+        assertErrorCode(t, ConflictException.class, "ACTIVE_AUCTION_EXISTS");
+        verify(outboxRecorder, never()).record(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("startAuction: 다른 무결성 위반은 바꾸지 않고 그대로 던진다")
+    void startAuction_otherIntegrityViolationPropagates() {
+        Auction auction = auctionWithEndTime(LocalDateTime.now().plusHours(1));
+        when(auctionRepository.findById(AUCTION_ID)).thenReturn(Optional.of(auction));
+        when(productRepository.findById(PRODUCT_ID)).thenReturn(Optional.of(product));
+        when(auctionRepository.existsByProductIdAndStatus(PRODUCT_ID, AuctionStatus.ACTIVE)).thenReturn(false);
+        DataIntegrityViolationException other = duplicateKey("auction.PRIMARY");
+        when(auctionRepository.saveAndFlush(auction)).thenThrow(other);
+
+        Throwable t = catchThrowable(() -> auctionService.startAuction(SELLER_ID, AUCTION_ID));
+
+        assertThat(t).isSameAs(other);
     }
 
     // ---------- createAuction ----------

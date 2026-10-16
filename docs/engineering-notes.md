@@ -1,8 +1,16 @@
 # 트랩과 비자명 메커니즘
 
-## MySQL 8.0 partial unique index 미지원
+## MySQL에는 조건부 UNIQUE 인덱스가 없다 — 생성 컬럼으로 흉내 낸다
 
-MySQL은 조건부 유니크 인덱스(partial unique index)를 지원하지 않는다. "하나의 Product에 ACTIVE Auction은 최대 1개"라는 불변 조건은 DB 레벨에서 강제할 수 없으므로, 경매 생성/시작 시 애플리케이션 코드에서 검증해야 한다. 이 검증을 빠뜨리면 동일 상품에 복수 ACTIVE 경매가 생길 수 있다. 같은 이유로 "한 경매에 ACTIVE Bid는 최대 1개"도 bid-service 코드가 지킨다(새 입찰 저장 전에 기존 ACTIVE를 OUTBID로 내린다).
+"상품당 ACTIVE 경매 1개", "경매당 ACTIVE 입찰 1개"는 조건부 유니크(`WHERE status='ACTIVE'`)가 필요한데 MySQL 8.0은 지원하지 않는다. D21부터 생성 컬럼 + UNIQUE로 DB가 강제한다: `active_product_id = IF(status='ACTIVE', product_id, NULL)`(auction), `active_auction_id = IF(status='ACTIVE', auction_id, NULL)`(bid). UNIQUE 인덱스는 NULL끼리 충돌하지 않으므로 ACTIVE 행끼리만 충돌한다. 애플리케이션 사전 검사(`ensureNoActiveAuction`, 분산 락)는 빠른 거절과 명확한 오류를 위해 유지하고, 제약은 그 검사를 함께 통과한 동시 요청을 막는 최종 방어다. D21 재현(같은 상품 경매 두 개 동시 시작 100회)에서 **100회 모두** 두 요청이 사전 검사를 함께 통과했다 — "드문 경합"이 아니었다.
+
+- 생성 컬럼은 엔티티에 매핑하지 않는다. INSERT/UPDATE 컬럼 목록에 들어가면 MySQL이 거부한다.
+- 위반은 즉시 flush해 그 자리에서 받는다(`saveAndFlush`). 커밋 시점까지 미루면 트랜잭션 프록시 밖에서 `DataIntegrityViolationException`이 나가 500이 된다. 어떤 제약인지는 원인 메시지의 인덱스 이름(`Duplicate entry '5' for key 'auction.uk_auction_active_product'`)으로 가리고, 다른 무결성 위반은 바꾸지 않고 다시 던진다.
+- 제약이 막으면 WARN 로그("…DB 제약이 막음")를 남긴다. 사전 검사를 통과한 경합이 얼마나 자주 생기는지 운영에서 볼 수 있다.
+
+## 새 ACTIVE 입찰 INSERT 전에 이전 입찰의 OUTBID UPDATE를 flush해야 한다
+
+`Bid`의 id는 `IDENTITY`라 `save(new Bid)` 순간 INSERT가 나가지만, 이전 ACTIVE를 OUTBID로 바꾼 UPDATE는 flush 때까지 미뤄진다. 그대로 두면 INSERT 시점에 잠시 ACTIVE가 2개라 `uk_bid_active_auction`에 걸린다 — 모든 정상 입찰이 실패한다. `placeBid`는 `saveAndFlush(previous)` 후 새 입찰을 저장한다. ACTIVE를 만드는 경로를 새로 추가할 때도 "ACTIVE를 내리는 쓰기 → flush → ACTIVE를 만드는 쓰기" 순서를 지킨다. (Hibernate는 flush 때도 INSERT를 UPDATE보다 먼저 실행하므로, 같은 flush에 몰아도 같은 문제가 난다.)
 
 ## Docker Compose MySQL 초기화 순서
 
@@ -110,7 +118,7 @@ auction-service의 BidClient·PaymentClient는 fallback이 없어서 실패가 `
 
 ## 원격 호출은 분산 락 안에도 두지 않는다 (임대 시간 초과)
 
-Redisson `tryLock(wait, lease)`의 lease는 처리 중이어도 시간이 되면 락을 푼다. 입찰 락의 lease는 5초인데, D19까지는 락 안에서 auction-service를 조회해(connect 2초 + read 5초) 최악 7초가 걸릴 수 있었다. 상류가 느린 순간 락이 처리 도중 풀리고 다음 요청이 같은 경매에 들어온다. 기존 ACTIVE를 OUTBID로 바꾸는 경로는 `@Version`이 막지만, 첫 입찰 두 건의 동시 INSERT는 막지 못해 ACTIVE가 2개가 된다. D20에서 조회를 락 밖으로 옮겨 락 안에는 DB 작업만 남았다. 락 안에 다시 원격 호출을 넣거나 lease를 줄일 때는 "락 안 최악 처리 시간 < lease"를 먼저 확인한다. 남은 경계: 락 안에서 Hikari 커넥션을 기다리는 시간(기본 connection-timeout 30초)은 lease보다 길 수 있다. 풀 고갈이 없는 한 문제되지 않는다.
+Redisson `tryLock(wait, lease)`의 lease는 처리 중이어도 시간이 되면 락을 푼다. 입찰 락의 lease는 5초인데, D19까지는 락 안에서 auction-service를 조회해(connect 2초 + read 5초) 최악 7초가 걸릴 수 있었다. 상류가 느린 순간 락이 처리 도중 풀리고 다음 요청이 같은 경매에 들어온다. 기존 ACTIVE를 OUTBID로 바꾸는 경로는 `@Version`이 막지만, 첫 입찰 두 건의 동시 INSERT는 막지 못해 ACTIVE가 2개가 됐다(D21부터는 `uk_bid_active_auction`이 막는다). D20에서 조회를 락 밖으로 옮겨 락 안에는 DB 작업만 남았다. 락 안에 다시 원격 호출을 넣거나 lease를 줄일 때는 "락 안 최악 처리 시간 < lease"를 먼저 확인한다. 남은 경계: 락 안에서 Hikari 커넥션을 기다리는 시간(기본 connection-timeout 30초)은 lease보다 길 수 있다. 풀 고갈이 없는 한 문제되지 않는다.
 
 ## 락 밖에서 조회한 경매 상태는 락 대기 시간만큼 오래됐을 수 있다
 

@@ -13,6 +13,9 @@ import com.auction.auction.exception.NotFoundException;
 import com.auction.auction.repository.AuctionRepository;
 import com.auction.auction.repository.ProductRepository;
 import com.auction.common.event.AuctionStartedEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +25,9 @@ import java.util.UUID;
 
 @Service
 public class AuctionService {
+
+    private static final Logger log = LoggerFactory.getLogger(AuctionService.class);
+    static final String ACTIVE_PRODUCT_CONSTRAINT = "uk_auction_active_product";
 
     private final AuctionRepository auctionRepository;
     private final ProductRepository productRepository;
@@ -76,10 +82,12 @@ public class AuctionService {
                     "이미 종료 시간이 지난 경매는 시작할 수 없습니다. endTime=" + auction.getEndTime());
         }
 
+        // 빠른 거절과 명확한 오류용 사전 검사. 동시에 시작한 두 요청은 둘 다 통과할 수 있고,
+        // 그때는 uk_auction_active_product(상품당 ACTIVE 1개) 제약이 한쪽을 막는다.
         ensureNoActiveAuction(auction.getProductId());
 
         auction.start();
-        Auction saved = auctionRepository.save(auction);
+        Auction saved = startWithUniquenessGuard(auction);
 
         AuctionStartedEvent event = new AuctionStartedEvent(
                 UUID.randomUUID().toString(), LocalDateTime.now(),
@@ -117,11 +125,38 @@ public class AuctionService {
                         "상품을 찾을 수 없습니다. id=" + productId));
     }
 
-    /** 하나의 Product에 ACTIVE Auction은 최대 1개 — MySQL은 partial unique index가 없어 애플리케이션에서 검증. */
+    /**
+     * 시작(WAITING → ACTIVE)을 즉시 flush해 제약 위반을 이 자리에서 받는다. 그냥 save하면 UPDATE가 커밋 시점으로
+     * 미뤄져, 위반이 트랜잭션 프록시 밖에서 DataIntegrityViolationException(500)으로 나간다.
+     */
+    private Auction startWithUniquenessGuard(Auction auction) {
+        try {
+            return auctionRepository.saveAndFlush(auction);
+        } catch (DataIntegrityViolationException e) {
+            if (violates(e, ACTIVE_PRODUCT_CONSTRAINT)) {
+                log.warn("동시 시작을 DB 제약이 막음(사전 검사 통과 후 경합). productId={}, auctionId={}",
+                        auction.getProductId(), auction.getAuctionId());
+                throw activeAuctionExists(auction.getProductId());
+            }
+            throw e;
+        }
+    }
+
+    /** 원인 메시지 예: Duplicate entry '5' for key 'auction.uk_auction_active_product' */
+    private static boolean violates(DataIntegrityViolationException e, String constraint) {
+        String message = e.getMostSpecificCause().getMessage();
+        return message != null && message.contains(constraint);
+    }
+
+    private static ConflictException activeAuctionExists(Long productId) {
+        return new ConflictException("ACTIVE_AUCTION_EXISTS",
+                "해당 상품에 이미 진행 중인 경매가 있습니다. productId=" + productId);
+    }
+
+    /** 하나의 Product에 ACTIVE Auction은 최대 1개. 최종 방어는 DB 제약(uk_auction_active_product)이다. */
     private void ensureNoActiveAuction(Long productId) {
         if (auctionRepository.existsByProductIdAndStatus(productId, AuctionStatus.ACTIVE)) {
-            throw new ConflictException("ACTIVE_AUCTION_EXISTS",
-                    "해당 상품에 이미 진행 중인 경매가 있습니다. productId=" + productId);
+            throw activeAuctionExists(productId);
         }
     }
 }

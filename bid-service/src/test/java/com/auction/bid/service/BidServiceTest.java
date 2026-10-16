@@ -10,22 +10,26 @@ import com.auction.bid.exception.AuctionAlreadyEndedException;
 import com.auction.bid.exception.AuctionNotActiveException;
 import com.auction.bid.exception.AuctionNotFoundException;
 import com.auction.bid.exception.BidAmountTooLowException;
+import com.auction.bid.exception.BidConflictException;
 import com.auction.bid.exception.BidNotFoundException;
 import com.auction.bid.exception.InvalidRequestException;
 import com.auction.bid.exception.SellerCannotBidException;
 import com.auction.bid.exception.UpstreamErrorException;
 import com.auction.bid.exception.UpstreamUnavailableException;
 import com.auction.bid.repository.BidRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.sql.SQLIntegrityConstraintViolationException;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -36,6 +40,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -84,6 +89,10 @@ class BidServiceTest {
         return bidService.placeBid(bidderId, request, bidService.prepareBid(bidderId, request));
     }
 
+    private void stubSaveAndFlushReturnsArgument() {
+        when(bidRepository.saveAndFlush(any(Bid.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    }
+
     private void stubSaveReturnsArgument() {
         when(bidRepository.save(any(Bid.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
@@ -117,7 +126,7 @@ class BidServiceTest {
             assertThatThrownBy(() -> place(BIDDER_ID, request("9999")))
                     .isInstanceOf(BidAmountTooLowException.class)
                     .satisfies(e -> assertThat(((BidAmountTooLowException) e).getCode()).isEqualTo("BID_AMOUNT_TOO_LOW"));
-            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).saveAndFlush(any());
         }
 
         @Test
@@ -125,7 +134,7 @@ class BidServiceTest {
         void firstBidEqualToStartingPriceAccepted() {
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(activeAuction());
             when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.empty());
-            stubSaveReturnsArgument();
+            stubSaveAndFlushReturnsArgument();
 
             Bid saved = place(BIDDER_ID, request("10000"));
 
@@ -133,7 +142,7 @@ class BidServiceTest {
             assertThat(saved.getAmount()).isEqualByComparingTo("10000");
             assertThat(saved.getBidderId()).isEqualTo(BIDDER_ID);
             assertThat(saved.getAuctionId()).isEqualTo(AUCTION_ID);
-            verify(bidRepository, times(1)).save(any(Bid.class));
+            verify(bidRepository, times(1)).saveAndFlush(any(Bid.class));
         }
 
         @Test
@@ -146,7 +155,7 @@ class BidServiceTest {
             assertThatThrownBy(() -> place(BIDDER_ID, request("16000")))
                     .isInstanceOf(BidAmountTooLowException.class);
             assertThat(current.getStatus()).isEqualTo(BidStatus.ACTIVE);
-            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).saveAndFlush(any());
         }
 
         @Test
@@ -155,7 +164,7 @@ class BidServiceTest {
             Bid current = new Bid(AUCTION_ID, 3L, new BigDecimal("15000"));
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(activeAuction());
             when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.of(current));
-            stubSaveReturnsArgument();
+            stubSaveAndFlushReturnsArgument();
 
             Bid saved = place(BIDDER_ID, request("16001"));
 
@@ -164,7 +173,7 @@ class BidServiceTest {
             assertThat(saved.getAmount()).isEqualByComparingTo("16001");
 
             ArgumentCaptor<Bid> captor = ArgumentCaptor.forClass(Bid.class);
-            verify(bidRepository, times(2)).save(captor.capture());
+            verify(bidRepository, times(2)).saveAndFlush(captor.capture());
             assertThat(captor.getAllValues().get(0)).isSameAs(current);
             assertThat(captor.getAllValues().get(1)).isSameAs(saved);
         }
@@ -175,7 +184,7 @@ class BidServiceTest {
             Bid current = new Bid(AUCTION_ID, BIDDER_ID, new BigDecimal("15000"));
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(activeAuction());
             when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.of(current));
-            stubSaveReturnsArgument();
+            stubSaveAndFlushReturnsArgument();
 
             Bid saved = place(BIDDER_ID, request("20000"));
 
@@ -197,7 +206,7 @@ class BidServiceTest {
             assertThatThrownBy(() -> place(SELLER_ID, request("20000")))
                     .isInstanceOf(SellerCannotBidException.class);
             verify(bidRepository, never()).findByAuctionIdAndStatus(any(), any());
-            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).saveAndFlush(any());
         }
 
         @Test
@@ -208,7 +217,7 @@ class BidServiceTest {
 
             assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(AuctionNotActiveException.class);
-            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).saveAndFlush(any());
         }
 
         @Test
@@ -219,7 +228,7 @@ class BidServiceTest {
 
             assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(AuctionAlreadyEndedException.class);
-            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).saveAndFlush(any());
         }
 
         @Test
@@ -230,7 +239,7 @@ class BidServiceTest {
 
             assertThatThrownBy(() -> place(SELLER_ID, request("20000")))
                     .isInstanceOf(UpstreamErrorException.class);
-            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).saveAndFlush(any());
         }
 
         @Test
@@ -255,7 +264,7 @@ class BidServiceTest {
 
             assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(AuctionNotFoundException.class);
-            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).saveAndFlush(any());
         }
 
         @Test
@@ -269,7 +278,7 @@ class BidServiceTest {
                     .isInstanceOf(UpstreamUnavailableException.class)
                     .satisfies(e -> assertThat(((UpstreamUnavailableException) e).getCode())
                             .isEqualTo("UPSTREAM_UNAVAILABLE"));
-            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).saveAndFlush(any());
         }
 
         @Test
@@ -279,7 +288,7 @@ class BidServiceTest {
 
             assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(UpstreamUnavailableException.class);
-            verify(bidRepository, never()).save(any());
+            verify(bidRepository, never()).saveAndFlush(any());
         }
 
         @Test
@@ -289,6 +298,55 @@ class BidServiceTest {
 
             assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(UpstreamErrorException.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("입찰 접수 - ACTIVE 유일성 DB 제약")
+    class ActiveUniqueness {
+
+        private DataIntegrityViolationException duplicateKey(String key) {
+            return new DataIntegrityViolationException("could not execute statement",
+                    new SQLIntegrityConstraintViolationException("Duplicate entry '10' for key '" + key + "'"));
+        }
+
+        @Test
+        @DisplayName("이전 ACTIVE의 OUTBID 변경을 새 입찰 INSERT보다 먼저 flush한다 (IDENTITY라 INSERT가 즉시 나간다)")
+        void outbidFlushedBeforeInsert() {
+            Bid current = new Bid(AUCTION_ID, 3L, new BigDecimal("15000"));
+            when(auctionClient.getAuction(AUCTION_ID)).thenReturn(activeAuction());
+            when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.of(current));
+            stubSaveAndFlushReturnsArgument();
+
+            Bid saved = place(BIDDER_ID, request("20000"));
+
+            InOrder inOrder = inOrder(bidRepository);
+            inOrder.verify(bidRepository).saveAndFlush(current);
+            inOrder.verify(bidRepository).saveAndFlush(saved);
+            verify(bidRepository, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("uk_bid_active_auction 위반(락을 거치지 않은 동시 입찰)은 BID_CONFLICT(409)로 바꾼다")
+        void activeUniquenessViolationMappedToConflict() {
+            when(auctionClient.getAuction(AUCTION_ID)).thenReturn(activeAuction());
+            when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.empty());
+            when(bidRepository.saveAndFlush(any(Bid.class))).thenThrow(duplicateKey("bid.uk_bid_active_auction"));
+
+            assertThatThrownBy(() -> place(BIDDER_ID, request("10000")))
+                    .isInstanceOf(BidConflictException.class)
+                    .satisfies(e -> assertThat(((BidConflictException) e).getCode()).isEqualTo("BID_CONFLICT"));
+        }
+
+        @Test
+        @DisplayName("다른 무결성 위반은 바꾸지 않고 그대로 던진다")
+        void otherIntegrityViolationPropagates() {
+            when(auctionClient.getAuction(AUCTION_ID)).thenReturn(activeAuction());
+            when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.empty());
+            DataIntegrityViolationException other = duplicateKey("bid.PRIMARY");
+            when(bidRepository.saveAndFlush(any(Bid.class))).thenThrow(other);
+
+            assertThatThrownBy(() -> place(BIDDER_ID, request("10000"))).isSameAs(other);
         }
     }
 
