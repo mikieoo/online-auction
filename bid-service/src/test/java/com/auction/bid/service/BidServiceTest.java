@@ -79,6 +79,11 @@ class BidServiceTest {
         return request;
     }
 
+    /** 운영 경로(BidLockFacade)와 같은 순서로 두 단계를 잇는다: 락 밖 검사 → 트랜잭션 쓰기. */
+    private Bid place(Long bidderId, PlaceBidRequest request) {
+        return bidService.placeBid(bidderId, request, bidService.prepareBid(bidderId, request));
+    }
+
     private void stubSaveReturnsArgument() {
         when(bidRepository.save(any(Bid.class))).thenAnswer(invocation -> invocation.getArgument(0));
     }
@@ -90,7 +95,7 @@ class BidServiceTest {
         @Test
         @DisplayName("amount가 null이면 INVALID_REQUEST로 거절하고 auction-service를 호출하지 않는다")
         void nullAmountRejected() {
-            assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request(null)))
+            assertThatThrownBy(() -> place(BIDDER_ID, request(null)))
                     .isInstanceOf(InvalidRequestException.class);
             verify(auctionClient, never()).getAuction(any());
         }
@@ -98,7 +103,7 @@ class BidServiceTest {
         @Test
         @DisplayName("amount가 0 이하이면 INVALID_REQUEST로 거절한다")
         void nonPositiveAmountRejected() {
-            assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("0")))
+            assertThatThrownBy(() -> place(BIDDER_ID, request("0")))
                     .isInstanceOf(InvalidRequestException.class);
             verify(auctionClient, never()).getAuction(any());
         }
@@ -109,7 +114,7 @@ class BidServiceTest {
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(activeAuction());
             when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("9999")))
+            assertThatThrownBy(() -> place(BIDDER_ID, request("9999")))
                     .isInstanceOf(BidAmountTooLowException.class)
                     .satisfies(e -> assertThat(((BidAmountTooLowException) e).getCode()).isEqualTo("BID_AMOUNT_TOO_LOW"));
             verify(bidRepository, never()).save(any());
@@ -122,7 +127,7 @@ class BidServiceTest {
             when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.empty());
             stubSaveReturnsArgument();
 
-            Bid saved = bidService.placeBid(BIDDER_ID, request("10000"));
+            Bid saved = place(BIDDER_ID, request("10000"));
 
             assertThat(saved.getStatus()).isEqualTo(BidStatus.ACTIVE);
             assertThat(saved.getAmount()).isEqualByComparingTo("10000");
@@ -138,7 +143,7 @@ class BidServiceTest {
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(activeAuction());
             when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.of(current));
 
-            assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("16000")))
+            assertThatThrownBy(() -> place(BIDDER_ID, request("16000")))
                     .isInstanceOf(BidAmountTooLowException.class);
             assertThat(current.getStatus()).isEqualTo(BidStatus.ACTIVE);
             verify(bidRepository, never()).save(any());
@@ -152,7 +157,7 @@ class BidServiceTest {
             when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.of(current));
             stubSaveReturnsArgument();
 
-            Bid saved = bidService.placeBid(BIDDER_ID, request("16001"));
+            Bid saved = place(BIDDER_ID, request("16001"));
 
             assertThat(current.getStatus()).isEqualTo(BidStatus.OUTBID);
             assertThat(saved.getStatus()).isEqualTo(BidStatus.ACTIVE);
@@ -172,7 +177,7 @@ class BidServiceTest {
             when(bidRepository.findByAuctionIdAndStatus(AUCTION_ID, BidStatus.ACTIVE)).thenReturn(Optional.of(current));
             stubSaveReturnsArgument();
 
-            Bid saved = bidService.placeBid(BIDDER_ID, request("20000"));
+            Bid saved = place(BIDDER_ID, request("20000"));
 
             assertThat(current.getStatus()).isEqualTo(BidStatus.OUTBID);
             assertThat(saved.getStatus()).isEqualTo(BidStatus.ACTIVE);
@@ -189,7 +194,7 @@ class BidServiceTest {
         void sellerCannotBid() {
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(activeAuction());
 
-            assertThatThrownBy(() -> bidService.placeBid(SELLER_ID, request("20000")))
+            assertThatThrownBy(() -> place(SELLER_ID, request("20000")))
                     .isInstanceOf(SellerCannotBidException.class);
             verify(bidRepository, never()).findByAuctionIdAndStatus(any(), any());
             verify(bidRepository, never()).save(any());
@@ -201,7 +206,7 @@ class BidServiceTest {
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(
                     new AuctionSummaryResponse(AUCTION_ID, SELLER_ID, STARTING_PRICE, "WAITING", NOW.plusHours(1)));
 
-            assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("20000")))
+            assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(AuctionNotActiveException.class);
             verify(bidRepository, never()).save(any());
         }
@@ -212,7 +217,7 @@ class BidServiceTest {
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(
                     new AuctionSummaryResponse(AUCTION_ID, SELLER_ID, STARTING_PRICE, "ACTIVE", NOW));
 
-            assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("20000")))
+            assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(AuctionAlreadyEndedException.class);
             verify(bidRepository, never()).save(any());
         }
@@ -223,7 +228,7 @@ class BidServiceTest {
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(
                     new AuctionSummaryResponse(AUCTION_ID, null, null, "ACTIVE", NOW.plusHours(1)));
 
-            assertThatThrownBy(() -> bidService.placeBid(SELLER_ID, request("20000")))
+            assertThatThrownBy(() -> place(SELLER_ID, request("20000")))
                     .isInstanceOf(UpstreamErrorException.class);
             verify(bidRepository, never()).save(any());
         }
@@ -234,7 +239,7 @@ class BidServiceTest {
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(
                     new AuctionSummaryResponse(AUCTION_ID, SELLER_ID, STARTING_PRICE, "CLOSED", NOW.minusHours(1)));
 
-            assertThatThrownBy(() -> bidService.placeBid(SELLER_ID, request("20000")))
+            assertThatThrownBy(() -> place(SELLER_ID, request("20000")))
                     .isInstanceOf(SellerCannotBidException.class);
         }
     }
@@ -248,7 +253,7 @@ class BidServiceTest {
         void auctionNotFoundPropagates() {
             when(auctionClient.getAuction(AUCTION_ID)).thenThrow(new AuctionNotFoundException(AUCTION_ID));
 
-            assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("20000")))
+            assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(AuctionNotFoundException.class);
             verify(bidRepository, never()).save(any());
         }
@@ -260,7 +265,7 @@ class BidServiceTest {
             when(auctionClient.getAuction(AUCTION_ID)).thenThrow(
                     new UpstreamUnavailableException("auction-service에 연결할 수 없습니다. auctionId=" + AUCTION_ID));
 
-            assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("20000")))
+            assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(UpstreamUnavailableException.class)
                     .satisfies(e -> assertThat(((UpstreamUnavailableException) e).getCode())
                             .isEqualTo("UPSTREAM_UNAVAILABLE"));
@@ -272,7 +277,7 @@ class BidServiceTest {
         void nullResponseMappedTo503() {
             when(auctionClient.getAuction(AUCTION_ID)).thenReturn(null);
 
-            assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("20000")))
+            assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(UpstreamUnavailableException.class);
             verify(bidRepository, never()).save(any());
         }
@@ -282,7 +287,7 @@ class BidServiceTest {
         void upstreamErrorPropagates() {
             when(auctionClient.getAuction(AUCTION_ID)).thenThrow(new UpstreamErrorException("bad request"));
 
-            assertThatThrownBy(() -> bidService.placeBid(BIDDER_ID, request("20000")))
+            assertThatThrownBy(() -> place(BIDDER_ID, request("20000")))
                     .isInstanceOf(UpstreamErrorException.class);
         }
     }

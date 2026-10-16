@@ -223,8 +223,20 @@
   - GCP 프로젝트 없이 코드·구조 검증까지만 진행.
 - 검증 상태: `helm lint` 통과, `helm template` 이미지 경로 정상 렌더링. 단위 테스트 231개 통과.
 
+## 완료 (D20)
+
+- 부하 테스트(k6): 시나리오 3개(`infra/k6/hot-auction.js`, `bid-throughput.js`, `settlement-drain.js`) + 공유 헬퍼(`lib/api.js`).
+  - `infra/k6/compose.loadtest.yml` 오버레이: 프로젝트 이름 분리(`auction-loadtest`), gateway `local` 프로필(토큰 발급기), Prometheus remote-write 수신. k6 0.54.0을 같은 Docker 네트워크에서 실행.
+  - 입찰 결과를 업무 단위로 분류(accepted / too_low / conflict / unavailable / error)해 시스템 실패만 threshold로 막고, 끝난 뒤 불변 조건(ACTIVE 1개·최고가 일치, 정산 최종 상태)을 검증.
+- 발견·수정: 입찰 트랜잭션 안의 auction-service 조회(Feign)가 부하 시 bid-service 커넥션 풀(10)을 고갈시켰다(대기 최대 29, 보유 58ms 중 조회 48ms). `BidService.prepareBid`(조회·검사, 락·트랜잭션 밖) → 분산 락 → `BidService.placeBid`(마감·금액 검사 + 저장, 짧은 트랜잭션)로 재구성. 락 안의 원격 호출(최악 7초)이 락 임대 시간(5초)을 넘는 문제도 함께 사라졌다.
+  - 경매 50개·초당 600건 점증: p95 692ms → 270ms, 409 156 → 0, 커넥션 대기 29 → 0.
+  - 경매 1개·초당 150건: p95 2.17s → 151ms, 409 15 → 0. 경매당 처리 상한 약 100 → 약 250건/초.
+  - 경매 200개 동시 마감: 23.3초에 전부 정산, 최종 상태 200/200 일치. 소요 시간은 처리 속도가 아니라 배치 상한(50) × 주기(5초)가 정한다(틱당 0.5~0.8초 사용).
+- 문서: `docs/notes/D20-부하-테스트.md`, operations.md 부하 테스트 절, standards.md(원격 호출을 트랜잭션·분산 락 안에 두지 않는다), engineering-notes 4항목, findings 3건 추가.
+- 검증 상태: 단위 테스트 233개(auction 82, bid 81 (+2), payment 42, gateway 28) 통과. `./gradlew clean build` 통과. 전체 스택 컨테이너 실기동에서 세 시나리오 수정 전후 측정.
+
 ## 남은 범위
-- **D20~D21:** 부하 테스트, Event Sourcing(선택)
+- **D21:** Event Sourcing(선택)
 - **D22~D30:** 추가 관측성, 문서화
 
 밀릴 때 자르는 순서: Event Sourcing → Blue/Green → Alertmanager → gRPC → Loki.
