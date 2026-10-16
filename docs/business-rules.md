@@ -2,8 +2,8 @@
 
 ## 엔티티 관계
 
-- Product 1 : N Auction (단, ACTIVE 상태의 Auction은 동시에 최대 1개)
-- Auction 1 : N Bid (bid-service 소유, auction_id로 참조). ACTIVE 상태의 Bid는 경매당 최대 1개.
+- Product 1 : N Auction (단, ACTIVE 상태의 Auction은 동시에 최대 1개 — DB 제약 `uk_auction_active_product`가 강제)
+- Auction 1 : N Bid (bid-service 소유, auction_id로 참조). ACTIVE 상태의 Bid는 경매당 최대 1개 — DB 제약 `uk_bid_active_auction`이 강제.
 - Auction 1 : N Payment (payment-service 소유, auction_id로 참조). Payment는 idempotencyKey당 1개.
 
 ## 상태 전이
@@ -82,7 +82,7 @@ REQUESTED ──(결제 실패)──→ FAILED
 
 목표: auctionId 기준 분산 락(Redisson)으로 동시 입찰을 직렬화한다. 마감 처리도 같은 락 범위에 포함되어 마감 직전 입찰과 충돌 시 먼저 락을 획득한 쪽이 실행된다.
 
-현재 상태: auctionId 기준 분산 락(Redisson, D7)으로 직렬화 완료. 낙관적 락(@Version, D6)은 안전망으로 유지.
+현재 상태: auctionId 기준 분산 락(Redisson, D7)으로 직렬화. 경매 조회는 락 밖, 락 안에는 짧은 쓰기 트랜잭션만(D20). 낙관적 락(@Version, D6)은 기존 ACTIVE를 내리는 UPDATE 경합의 안전망, ACTIVE 유일성 제약(D21)은 락이 무력화됐을 때 INSERT 경합까지 막는 최종 방어.
 
 ## 마감·정산
 

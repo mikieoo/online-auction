@@ -74,7 +74,8 @@
 
 - JPA ddl-auto: none. 스키마는 SQL 파일로 관리.
 - 스키마 원본은 각 서비스의 `src/main/resources/schema.sql`, `infra/mysql/init/0N-*.sql`은 `USE` 문을 붙인 사본. 둘을 함께 수정한다.
-- ACTIVE Auction 유일성(상품당 1개), ACTIVE Bid 유일성(경매당 1개)은 애플리케이션 레벨에서 검증 (MySQL은 partial unique index 미지원).
+- ACTIVE Auction 유일성(상품당 1개), ACTIVE Bid 유일성(경매당 1개)은 생성 컬럼 + UNIQUE(`uk_auction_active_product`, `uk_bid_active_auction`)로 DB가 강제한다. 애플리케이션 사전 검사는 빠른 거절용으로 유지한다. 생성 컬럼은 엔티티에 매핑하지 않는다.
+- 서비스의 `schema.sql`(원본)과 `infra/mysql/init/0N-*.sql`(사본)은 같은 커밋에서 함께 바꾼다. 서비스는 기동 시 `schema.sql`을 실행하지 않으므로(MySQL은 `spring.sql.init` 대상이 아니다) 원본만 어긋나도 아무 오류가 나지 않는다 — D21에서 세 서비스 원본이 모두 사본보다 뒤처져 있었다.
 - 경매 정산 진행 단계를 나타내는 별도 컬럼은 두지 않는다(D3 결정 — `status + winner_id` 조합으로 표현, D9에서 재설계).
 
 ## 설정
