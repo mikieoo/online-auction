@@ -119,7 +119,29 @@ curl $G/api/v1/payments/1 -H "Authorization: Bearer $T2"    # status=COMPLETED
 
 빌드 캐시·병렬 빌드가 `gradle.properties`로 켜져 있다. 캐시 문제가 의심되면 `./gradlew clean build --no-build-cache`.
 
+## 부하 테스트 (k6)
+
+전체 스택을 컨테이너로 띄우고, k6도 같은 Docker 네트워크 안에서 돌린다(호스트에 k6 설치 불필요). 오버레이 `infra/k6/compose.loadtest.yml`이 하는 일: 프로젝트 이름 `auction-loadtest`(개발용 볼륨과 분리), gateway에 `local` 프로필 추가(토큰 발급기), Prometheus remote-write 수신 활성화.
+
+```bash
+LT="docker compose -f docker-compose.yml -f infra/k6/compose.loadtest.yml"
+$LT up -d --build                     # 스택 기동 (서비스 4개가 Eureka에 UP이 될 때까지 1~2분)
+
+# 시나리오 1: 인기 경매 하나에 입찰 집중 (RATE=초당 입찰, DURATION, BIDDERS)
+$LT run --rm -e RATE=150 k6 run -o experimental-prometheus-rw --tag testid=hot-150 /scripts/hot-auction.js
+# 시나리오 2: 경매 여러 개에 분산, 도착률 점증 (PEAK=최고 초당 입찰, AUCTIONS, BIDDERS)
+$LT run --rm -e PEAK=600 k6 run -o experimental-prometheus-rw --tag testid=tp-600 /scripts/bid-throughput.js
+# 시나리오 3: 경매 N개 동시 마감 → 정산 완료까지 시간 (AUCTIONS, END_IN)
+$LT run --rm -e AUCTIONS=200 k6 run -o experimental-prometheus-rw --tag testid=drain-200 /scripts/settlement-drain.js
+
+$LT down                              # 종료 (데이터 유지). 초기화는 down -v
+```
+
+- 결과는 k6 요약과 Grafana(`localhost:3000`, Prometheus 데이터소스)에서 본다. k6 지표는 `k6_` 접두사, `testid` 태그로 실행을 구분한다.
+- 병목 확인에 쓴 쿼리: `max_over_time(hikaricp_connections_pending{application="bid-service"}[10m])`(커넥션 대기), `hikaricp_connections_usage_seconds`(보유 시간), `http_client_requests_seconds{application="bid-service"}`(auction 조회 시간).
+- k6가 같은 PC에서 돌아 CPU를 나눠 쓴다. 절대 수치보다 전후 비교로 읽는다. 측정 결과와 해석은 `docs/notes/D20-부하-테스트.md`.
+
 ## 작업 종료
 
-- 로컬: 서비스 프로세스 종료 후 `docker compose down` (데이터 유지) 또는 `down -v` (초기화).
+- 로컬: 서비스 프로세스 종료 후 `docker compose down` (데이터 유지) 또는 `down -v` (초기화). 부하 테스트 스택은 위의 `$LT down`.
 - GKE(D18 이후): 워크로드를 0으로 내린다.

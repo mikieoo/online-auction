@@ -1,0 +1,32 @@
+# 부하 테스트 전용 오버레이. 기본 docker-compose.yml 위에 겹쳐 쓴다.
+#
+#   docker compose -f docker-compose.yml -f infra/k6/compose.loadtest.yml up -d
+#   docker compose -f docker-compose.yml -f infra/k6/compose.loadtest.yml run --rm k6 run /scripts/hot-auction.js
+#
+# 프로젝트 이름을 따로 두어 개발용 볼륨(MySQL 데이터)과 섞이지 않게 한다.
+name: auction-loadtest
+
+services:
+  gateway:
+    environment:
+      # local 프로필은 개발용 토큰 발급기(POST /auth/token)만 켠다. 입찰자 수십 명의 토큰을 setup()에서 받는다.
+      SPRING_PROFILES_ACTIVE: docker,local
+
+  prometheus:
+    # k6 결과를 서비스 메트릭과 같은 Prometheus로 보내 Grafana에서 한 시간축으로 본다.
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
+      - --enable-feature=native-histograms
+
+  k6:
+    image: grafana/k6:0.54.0
+    profiles: ["loadtest"]
+    volumes:
+      - ./infra/k6:/scripts:ro
+    environment:
+      GATEWAY_URL: http://gateway:8080
+      K6_PROMETHEUS_RW_SERVER_URL: http://prometheus:9090/api/v1/write
+      K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM: "true"
+    entrypoint: ["k6"]
+    command: ["--help"]
