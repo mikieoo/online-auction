@@ -248,6 +248,11 @@
 - 검증 상태: 단위 테스트 238개(auction 84 (+2), bid 84 (+3), payment 42, gateway 28) 통과. `./gradlew clean build` 통과. 실기동: SQL 수준 제약 확인, 경합 재현 100회, D20 시나리오 회귀(인기 경매 150/s 409 0건·불변 조건 통과, 동시 마감 200개 200/200).
 - 문서: `docs/notes/D21-ACTIVE-유일성-DB-제약.md`, engineering-notes(조건부 UNIQUE, flush 순서), standards(DB 절), business-rules, operations.
 
+## 문서 정비 (D21 이후)
+
+- 루트 `README.md` 신설: 구성, 기술 스택, 문제-해결 요약표(D4~D21 기록 링크), D20·D21 측정 결과, 실행 방법, 문서 색인, 현재 한계.
+- `docs/architecture.md`를 D21 기준으로 재작성: D3 동기 정산 설명을 걷어내고 gRPC·Kafka·Outbox·멱등 소비·DLT, 동시성 제어 표, D20 이후 입찰 흐름, Saga 흐름, 배포 구성(Compose·CI/CD·Helm·Terraform), 관측성 추가.
+
 ## 남은 범위
 - **D22~:** Event Sourcing(선택)
 - **D22~D30:** 추가 관측성, 문서화
