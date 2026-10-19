@@ -7,6 +7,7 @@
 ```
 ├── CLAUDE.md                          ← 프로젝트 진입점 (이 파일)
 ├── AGENTS.md                          ← Codex 진입점 (CLAUDE.md와 동일)
+├── README.md                          ← 저장소 소개 (GitHub 첫 화면)
 ├── docs/
 │   ├── architecture.md                ← 시스템 구성과 서비스 간 통신
 │   ├── business-rules.md              ← 도메인 규칙과 상태 전이
@@ -15,6 +16,7 @@
 │   ├── engineering-notes.md           ← 트랩과 비자명 메커니즘
 │   ├── operations.md                  ← 셋업·빌드·배포 절차
 │   ├── contracts.md                   ← 외부 인터페이스 계약
+│   ├── notes/                         ← Day별 구현 기록 (D{n}-*.md)
 │   └── tracking/
 │       ├── status.md                  ← 현재 진행 상황
 │       ├── decisions/
